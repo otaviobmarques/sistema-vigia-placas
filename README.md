@@ -60,7 +60,7 @@ Cada integração tem cliente real e entra em **modo simulado** quando falta a c
 
 | Integração | Sem chave | Com chave |
 |---|---|---|
-| Infosimples (`INFOSIMPLES_TOKEN`) | Multas determinísticas por placa | `POST /api/v2/consultas/{serviço}`. **Confirmar o serviço e o formato do retorno** com a primeira resposta real; o normalizador aceita os nomes de campo mais comuns. |
+| Infosimples (`INFOSIMPLES_TOKEN`) | Multas determinísticas por placa | Cada placa consulta, em paralelo, a **PRF** (`prf/infracoes`) e a fonte do seu estado que funciona só com placa e Renavam: Detran AL, AM, CE, MA, MS, PA, PI, RR, RJ (com CPF/CNPJ do dono) e MG (`detran/mg/multas-extrato`, a confirmar sem login). SP, PR, BA, DF, GO, RS e SC só têm consultas com login gov.br/certificado: nelas valem a PRF e a captura de notificações. Cada serviço é uma fonte no backoffice (saúde, custo, desligamento automático); "Testar fonte" mostra a resposta crua com uma placa real. Lista completa em `src/lib/integrations/infosimples.ts` |
 | Asaas (`ASAAS_API_KEY`) | Pix BR Code válido + botão "simular confirmação" | Cobrança Pix com `split` por `walletId`, QR Code, Pague Contas (`/bill`) e webhook em `/api/webhooks/asaas` (header `asaas-access-token` = `ASAAS_WEBHOOK_TOKEN`) |
 | Celcoin | Simulada | Pendente de proposta comercial |
 | Claude (`ANTHROPIC_API_KEY`) | Campos preenchidos à mão | Leitura automática da foto/PDF da notificação (tela Enviar) e do CRLV-e (tela Placas) com Claude Haiku 5.5. Saída estruturada e validada; a pessoa confere antes de enviar; limite de 100 leituras/dia por cliente |

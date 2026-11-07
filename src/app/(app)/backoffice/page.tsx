@@ -1,7 +1,8 @@
 import { exigirSessao, noEscopo } from "@/lib/auth";
 import { hojeISO } from "@/lib/domain/dates";
 import { brl } from "@/lib/domain/money";
-import { modoSimulado } from "@/lib/integrations/infosimples";
+import { FONTES, modoSimulado, UFS_EXIGEM_LOGIN } from "@/lib/integrations/infosimples";
+import { TestarFonte } from "@/components/testar-fonte";
 import { asaasSimulado } from "@/lib/integrations/asaas";
 import { Abas, Aviso, Cabecalho, Card, Mensagem, Numero } from "@/components/ui";
 import { atualizarDefesaAction, reativarFonte, rodarVarredura, salvarConfigGlobal, salvarFranqueado, transferirCliente } from "../../actions";
@@ -121,6 +122,7 @@ export default async function Backoffice({ searchParams }: { searchParams: Promi
       )}
 
       {aba === "fontes" && (
+        <>
         <Card titulo="Saúde das fontes" acoes={<form action={rodarVarredura}><button className="btn-primario btn-sm">Rodar varredura agora</button></form>}>
           <table className="tabela">
             <thead><tr><th>Fonte</th><th>Status</th><th className="text-right">Consultas (7d)</th><th className="text-right">Erros (7d)</th><th className="text-right">Custo/consulta</th><th>Última falha</th><th /></tr></thead>
@@ -136,8 +138,18 @@ export default async function Backoffice({ searchParams }: { searchParams: Promi
               ))}
             </tbody>
           </table>
-          <p className="mt-3 text-xs text-suave">Fonte com 5 erros seguidos é desligada automaticamente. A varredura também roda pelo agendador (rota /api/cron/monitoramento).</p>
+          <p className="mt-3 text-xs text-suave">Cada serviço da Infosimples aparece como uma fonte própria depois da primeira consulta. Fonte com 5 erros seguidos é desligada automaticamente; a linha "Infosimples" liga e desliga todas. A varredura também roda pelo agendador (rota /api/cron/monitoramento).</p>
         </Card>
+        <Card titulo="Cobertura da Infosimples por UF" className="mt-6">
+          <div className="grid gap-2 text-sm sm:grid-cols-2">
+            <div><b>Sem login do proprietário (padrão):</b> PRF em todas as UFs{" + "}{FONTES.filter((f) => f.uf !== "*").map((f) => `${f.uf}${f.aConfirmar ? " (a confirmar)" : ""}`).join(", ")}.</div>
+            <div><b>Exigem login gov.br ou certificado:</b> {UFS_EXIGEM_LOGIN.join(", ")}. Nessas UFs, a captura de notificações e a base nacional (Senatran) completam a cobertura.</div>
+          </div>
+        </Card>
+        <Card titulo="Testar fonte com uma placa real" className="mt-6">
+          <TestarFonte fontes={FONTES.map((f) => ({ servico: f.servico, nome: f.nome, uf: f.uf, aConfirmar: f.aConfirmar }))} ativo={!modoSimulado()} />
+        </Card>
+        </>
       )}
 
       {aba === "cobertura" && (
