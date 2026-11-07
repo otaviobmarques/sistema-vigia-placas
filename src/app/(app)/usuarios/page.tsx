@@ -11,7 +11,7 @@ export default async function Usuarios({ searchParams }: { searchParams: Promise
   const s = await exigirSessao(["franqueadora", "franqueado"]);
   const sp = await searchParams;
   const d = await noEscopo(s, async (db) => ({
-    usuarios: await listarUsuarios(db),
+    usuarios: await listarUsuarios(db, s.nivel === "franqueadora" && !ehAdminSistema(s)),
     franqueados: await db.q("select id, nome from franqueados where ativo order by nome"),
     clientes: await db.q("select id, nome from clientes where ativo order by nome"),
   }));

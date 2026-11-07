@@ -59,11 +59,13 @@ export async function criarUsuario(db: Db, u: NovoUsuario) {
   return login;
 }
 
-export async function listarUsuarios(db: Db) {
+/** Lista os acessos visíveis. `somenteClientes`: o Gestor do Vigia Placa vê e gerencia só acessos de clientes. */
+export async function listarUsuarios(db: Db, somenteClientes = false) {
   return db.q(
     `select u.id, u.email, u.nome, u.nivel, u.perfil, u.ativo, u.trocar_senha, u.totp_secret is not null as dois_fatores, u.criado_em,
             f.nome as franqueado_nome, c.nome as cliente_nome
      from usuarios u left join franqueados f on f.id = u.franqueado_id left join clientes c on c.id = u.cliente_id
+     ${somenteClientes ? "where u.nivel = 'cliente'" : ""}
      order by u.nivel, coalesce(f.nome, c.nome, ''), u.nome`,
   );
 }
