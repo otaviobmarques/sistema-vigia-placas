@@ -59,6 +59,12 @@ export async function criarCobrancaPix(opts: {
   return { id: cobranca.id, payload: qr.payload, qrBase64: `data:image/png;base64,${qr.encodedImage}` };
 }
 
+/** Cancela (remove) uma cobrança ainda não paga. */
+export async function cancelarCobranca(id: string) {
+  if (asaasSimulado()) return;
+  await api("DELETE", `/payments/${id}`);
+}
+
 /** Pague Contas: paga um boleto de qualquer banco a partir do saldo Asaas. */
 export async function pagarBoleto(linhaDigitavel: string, descricao: string): Promise<{ ok: boolean; id?: string; erro?: string }> {
   if (asaasSimulado()) {

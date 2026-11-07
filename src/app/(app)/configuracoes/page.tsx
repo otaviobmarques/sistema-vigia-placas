@@ -115,11 +115,12 @@ export default async function Configuracoes({ searchParams }: { searchParams: Pr
               <thead><tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Dois fatores</th></tr></thead>
               <tbody>{d.usuarios.map((u) => <tr key={u.email}><td>{u.nome}</td><td>{u.email}</td><td>{u.perfil}</td><td>{u.dois ? "Ativo" : "—"}</td></tr>)}</tbody>
             </table>
-            <form action={convidarUsuario} className="grid gap-3 sm:grid-cols-4">
+            <form action={convidarUsuario} className="grid gap-3 sm:grid-cols-5">
               <input name="nome" placeholder="Nome" className="campo" />
-              <input name="email" type="email" required placeholder="E-mail" className="campo" />
+              <input name="email" required placeholder="E-mail ou usuário" autoCapitalize="none" className="campo" />
+              <input name="senha" type="password" minLength={10} required placeholder="Senha provisória" autoComplete="new-password" className="campo" />
               <select name="perfil" className="campo"><option value="gestor">Gestor</option><option value="financeiro">Financeiro</option><option value="leitura">Leitura</option><option value="admin">Administrador</option></select>
-              <button className="btn-contorno">Convidar</button>
+              <button className="btn-contorno">Criar acesso</button>
             </form>
             <div className="rounded-xl border border-borda p-4">
               <h3 className="font-bold">Autenticação em dois fatores</h3>

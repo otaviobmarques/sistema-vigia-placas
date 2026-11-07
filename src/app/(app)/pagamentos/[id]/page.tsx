@@ -6,7 +6,7 @@ import { brl } from "@/lib/domain/money";
 import { Aviso, Card, Mensagem } from "@/components/ui";
 import { Placa, Vigi } from "@/components/marca";
 import { CopiarPix } from "@/components/copiar";
-import { simularPagamento } from "../../../actions";
+import { aprovarPagamentoAction, cancelarPagamentoAction, simularPagamento } from "../../../actions";
 
 export const metadata = { title: "Pagamento Pix" };
 
@@ -23,8 +23,11 @@ export default async function PagamentoPix({ params, searchParams }: { params: P
   if (!d) notFound();
   const { p, itens } = d;
   const aguardando = p.status === "aguardando";
+  const paraAprovar = p.status === "aguardando_aprovacao";
+  const souQuemCriou = p.criado_por === s.usuarioId;
   const etapas = [
-    { t: "Aguardando o Pix", ok: !aguardando },
+    ...(paraAprovar || p.aprovado_por ? [{ t: "Segunda aprovação", ok: !!p.aprovado_por }] : []),
+    { t: "Aguardando o Pix", ok: !aguardando && !paraAprovar },
     { t: `Pagando ${itens.length} boleto(s)`, ok: ["quitado", "parcial"].includes(p.status) },
     { t: "Comprovantes anexados às multas", ok: ["quitado", "parcial"].includes(p.status) },
   ];
@@ -53,7 +56,26 @@ export default async function PagamentoPix({ params, searchParams }: { params: P
           </ol>
         </Card>
         <section className="card flex flex-col items-center p-6 text-center">
-          {aguardando ? (
+          {paraAprovar ? (
+            <>
+              <Vigi pose="alerta" size={110} />
+              <h2 className="mt-2 text-xl font-extrabold">Aguardando segunda aprovação</h2>
+              <p className="mt-1 text-sm text-suave">O total de <b className="text-vigia">{brl(p.total)}</b> passa do limite de aprovação dupla deste cliente (Configurações › Aprovações).</p>
+              {souQuemCriou ? (
+                <p className="mt-4 text-sm text-suave">Outra pessoa com permissão de pagar precisa aprovar. Avisamos os administradores e o financeiro por e-mail.</p>
+              ) : (
+                <form action={aprovarPagamentoAction} className="mt-4 w-full"><input type="hidden" name="id" value={p.id} /><button className="btn-economia w-full">Aprovar e gerar o Pix</button></form>
+              )}
+              <form action={cancelarPagamentoAction} className="mt-2 w-full"><input type="hidden" name="id" value={p.id} /><button className="btn-leve w-full">Cancelar pagamento</button></form>
+            </>
+          ) : p.status === "cancelado" ? (
+            <>
+              <Vigi pose="ola" size={110} />
+              <h2 className="mt-2 text-xl font-extrabold">Pagamento cancelado</h2>
+              <p className="mt-1 text-sm text-suave">As multas continuam no carrinho e podem ser pagas de novo.</p>
+              <Link href="/pagamentos" className="btn-primario mt-4">Voltar ao carrinho</Link>
+            </>
+          ) : aguardando ? (
             <>
               <div className="text-sm text-suave">Total no Pix</div>
               <div className="num mb-4 text-3xl font-extrabold">{brl(p.total)}</div>
@@ -61,6 +83,7 @@ export default async function PagamentoPix({ params, searchParams }: { params: P
               <img src={p.pix_qr} alt="QR Code Pix" className="h-56 w-56 rounded-xl border-2 border-vigia p-2" />
               <div className="mt-4 w-full"><CopiarPix texto={p.pix_payload} /></div>
               <p className="mt-3 text-xs text-suave">Quando o Pix cair, quitamos cada boleto, seja qual for o banco, e enviamos os comprovantes.</p>
+              <form action={cancelarPagamentoAction} className="mt-2 w-full"><input type="hidden" name="id" value={p.id} /><button className="btn-leve w-full">Cancelar este Pix</button></form>
               {asaasSimulado() && (
                 <form action={simularPagamento} className="mt-4 w-full">
                   <input type="hidden" name="id" value={p.id} />

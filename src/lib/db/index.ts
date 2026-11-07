@@ -88,8 +88,13 @@ async function migrar(d: Driver) {
   const feitas = new Set(
     (await d.transaction((x) => x("select nome from schema_migrations", []))).map((r: any) => r.nome),
   );
-  for (const f of arquivos) {
-    if (feitas.has(f)) continue;
+  const pendentes = arquivos.filter((f) => !feitas.has(f));
+  // Em produção o usuário do app não altera a estrutura do banco: as migrações são aplicadas antes do deploy
+  // (pelo painel/conector do Supabase). Se alguma faltar, o erro diz exatamente qual.
+  if (pendentes.length && process.env.DATABASE_URL && process.env.VIGIA_MIGRAR !== "1") {
+    throw new Error(`Migrações pendentes no banco: ${pendentes.join(", ")}. Aplique-as antes de publicar (ou defina VIGIA_MIGRAR=1 com um usuário dono do schema).`);
+  }
+  for (const f of pendentes) {
     const sql = fs.readFileSync(path.join(dir, f), "utf8");
     await d.exec(`begin;\n${sql}\ninsert into schema_migrations (nome) values ('${f}');\ncommit;`);
   }
