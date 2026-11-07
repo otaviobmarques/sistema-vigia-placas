@@ -9,6 +9,7 @@ import { Placa, Vigi } from "@/components/marca";
 import { GraficoEconomia, type MesEconomia } from "@/components/grafico-economia";
 import { adicionarCarrinho } from "../../actions";
 import { redirect } from "next/navigation";
+import { Notificacoes } from "@/components/notificacoes";
 
 export const metadata = { title: "Faça hoje" };
 
@@ -76,6 +77,7 @@ export default async function Hoje({ searchParams }: { searchParams: Promise<{ t
         titulo={`${saudacao()}! Aqui está o que precisa de você hoje.`}
         acoes={<div className="text-right text-xs text-suave">Última verificação: {ultima}<br />{dados.placas?.recentes} de {nPlacas} placas nas últimas 24h</div>}
       />
+      {!visaoCarteira && <Notificacoes compacto />}
       <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Numero destaque rotulo="Economia acumulada" valor={brl(acumulada)} detalhe={dados.desde ? `Desde ${nomeMes(dados.desde).split(" de ")[0]}${roi ? ` · cada R$ 1 investido voltou ${brl(Math.round(roi * 100))}` : ""}` : "Comprovada multa a multa"} />
         <Numero rotulo="Dinheiro na mesa" tom="economia" valor={brl(naMesa)} detalhe={`Descontos ainda disponíveis em ${nMesa} multa${nMesa === 1 ? "" : "s"}`} />

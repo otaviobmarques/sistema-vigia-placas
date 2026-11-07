@@ -3,6 +3,8 @@
 import bcrypt from "bcryptjs";
 import { randomUUID } from "node:crypto";
 import { headers } from "next/headers";
+import { after } from "next/server";
+import { despacharOutbox } from "@/lib/services/despacho";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { criarSessao, encerrarSessao, escolherCliente, exigirCliente, exigirSessao, noEscopo, podeAgir, type Sessao } from "@/lib/auth";
@@ -24,6 +26,8 @@ import { criarUsuario, niveisPermitidos, validarSenha, type Nivel, type Perfil }
 import { urlApp } from "@/lib/url";
 
 const s = (f: FormData, k: string) => String(f.get(k) ?? "").trim();
+/** Envia as notificações push da fila logo depois de responder ao usuário. */
+const despacharDepois = () => after(() => sistema((db) => despacharOutbox(db)).then(() => undefined, () => undefined));
 const ir = (path: string, msg?: { ok?: string; erro?: string }): never => {
   const q = msg?.ok ? `ok=${encodeURIComponent(msg.ok)}` : msg?.erro ? `erro=${encodeURIComponent(msg.erro)}` : "";
   redirect(q ? `${path}${path.includes("?") ? "&" : "?"}${q}` : path);
@@ -189,6 +193,7 @@ export async function simularPagamento(f: FormData) {
   const meu = await noEscopo(sessao, (db) => db.one("select id from pagamentos where id = $1", [id]));
   if (!meu) ir("/pagamentos", { erro: "Pagamento não encontrado." });
   const r = await sistema((db) => confirmarPagamento(db, id));
+  despacharDepois();
   revalidatePath("/", "layout");
   ir(`/pagamentos/${id}`, { ok: r.falhas ? `Pix recebido. ${r.falhas} boleto(s) não puderam ser pagos e viraram crédito.` : "Pix recebido e boletos quitados." });
 }
@@ -265,6 +270,7 @@ export async function adicionarPlaca(f: FormData) {
   }
   // Primeira varredura gratuita.
   const r = await sistema((db) => consultarPlaca(db, id!));
+  despacharDepois();
   revalidatePath("/", "layout");
   ir("/placas", { ok: `Placa cadastrada e consultada: ${r.total} multa(s) encontrada(s).` });
 }
@@ -301,6 +307,7 @@ export async function consultarAgora(f: FormData) {
     await db.q("update clientes set consultas_avulsas_usadas = consultas_avulsas_usadas + 1 where id = $1", [sessao.clienteId]);
     return consultarPlaca(db, placaId, { avulsa: true });
   });
+  despacharDepois();
   revalidatePath("/", "layout");
   ir(volta, r.ok ? { ok: `Consulta feita: ${r.novas} multa(s) nova(s).${extra ? " Consulta acima da franquia do plano: entra na fatura como avulsa." : ""}` } : { erro: `A fonte respondeu com erro: ${r.erro}` });
 }
@@ -334,6 +341,7 @@ export async function importarPlacas(f: FormData) {
   });
   let multas = 0;
   for (const id of ids) multas += (await sistema((db) => consultarPlaca(db, id))).total;
+  despacharDepois();
   revalidatePath("/", "layout");
   ir(sessao.nivel === "cliente" || sessao.clienteId ? "/placas" : "/carteira", { ok: `${ids.length} placas importadas. Primeira varredura feita: ${multas} multa(s) encontrada(s).` });
 }
@@ -547,6 +555,7 @@ export async function criarCliente(f: FormData) {
     }
   }
   for (const pid of ids) await sistema((db) => consultarPlaca(db, pid));
+  despacharDepois();
   await escolherCliente(id!);
   redirect(`/bem-vindo${erros.length ? `?erro=${encodeURIComponent("Atenção: " + erros.join("; "))}` : ""}`);
 }
