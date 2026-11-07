@@ -10,7 +10,7 @@ export async function GET(req: Request) {
   if (!/^\d{14}$/.test(doc)) return NextResponse.json({ erro: "CNPJ alfanumérico ainda não tem consulta pública" }, { status: 404 });
   try {
     const r = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${doc}`, {
-      headers: { "user-agent": "VigiaPlaca/1.0 (+https://vigia-placa.vercel.app)", accept: "application/json" },
+      headers: { "user-agent": "VigiaPlaca/1.0 (+https://www.vigiaplaca.com.br)", accept: "application/json" },
       signal: AbortSignal.timeout(8000),
       next: { revalidate: 86400 },
     });

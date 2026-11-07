@@ -73,6 +73,8 @@ Cada integração tem cliente real e entra em **modo simulado** quando falta a c
 
 ## Produção (Vercel + Supabase)
 
+Domínio: **https://www.vigiaplaca.com.br** (DNS na Hostgator: `www` CNAME para a Vercel e `vigiaplaca.com.br` A `76.76.21.21`, que redireciona para o `www`). `APP_URL` em produção aponta para ele.
+
 1. **Banco:** projeto Supabase com as migrações de `db/migrations/` aplicadas **antes** de cada deploy (pelo SQL Editor ou pelo conector do Supabase). O usuário do app não altera a estrutura do banco: se faltar alguma migração, o app recusa subir e o erro diz qual. Com `VIGIA_MIGRAR=1` e um usuário dono do schema, ele aplica sozinho.
 2. **Vercel:** defina `DATABASE_URL` com a connection string do **Transaction pooler** do Supabase (Project Settings › Database › Connection string, porta 6543). Defina também `APP_URL` e, quando houver, as chaves das integrações.
    - `SESSION_SECRET` é opcional: sem ela, a chave de sessão é derivada da `DATABASE_URL`, e trocar a senha do banco encerra as sessões.
