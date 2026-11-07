@@ -64,7 +64,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         <div className="mt-4 border-t border-white/10 px-3 pt-4 text-xs text-white/60">
           <div className="truncate font-medium text-white">{s.nome}</div>
           <div className="truncate">{s.email}</div>
-          <form action={sair}><button className="mt-2 underline hover:text-white">Sair</button></form>
+          <div className="mt-2 flex gap-3"><Link href="/conta" className="underline hover:text-white">Minha conta</Link><form action={sair}><button className="underline hover:text-white">Sair</button></form></div>
         </div>
       </aside>
 
@@ -78,6 +78,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               <Link key={it.href} href={it.href} className="block rounded-lg px-3 py-2 text-sm hover:bg-nevoa">{it.rotulo}</Link>
             ))}
             {s.nivel !== "cliente" && s.clienteId && <form action={sairCliente}><button className="w-full rounded-lg px-3 py-2 text-left text-sm text-suave hover:bg-nevoa">Trocar de cliente</button></form>}
+            <Link href="/conta" className="block rounded-lg px-3 py-2 text-sm hover:bg-nevoa">Minha conta</Link>
             <form action={sair}><button className="w-full rounded-lg px-3 py-2 text-left text-sm text-rec hover:bg-nevoa">Sair</button></form>
           </div>
         </details>

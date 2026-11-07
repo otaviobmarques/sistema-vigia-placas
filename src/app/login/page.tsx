@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { sessaoAtual } from "@/lib/auth";
+import { sistema } from "@/lib/db";
 import { Logo, Vigi } from "@/components/marca";
 import { FormLogin } from "./form";
 
@@ -7,6 +8,8 @@ export const metadata = { title: "Entrar" };
 
 export default async function Login() {
   if (await sessaoAtual()) redirect("/");
+  const semAdmin = Number((await sistema((db) => db.one("select count(*) as n from usuarios where nivel = 'franqueadora'")))?.n) === 0;
+  if (semAdmin) redirect("/primeiro-acesso");
   const demo = !process.env.DATABASE_URL;
   return (
     <main className="grid min-h-screen lg:grid-cols-2">

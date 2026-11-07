@@ -7,8 +7,8 @@ export function FormLogin() {
   return (
     <form action={acao} className="space-y-4">
       <div>
-        <label className="rotulo" htmlFor="email">E-mail</label>
-        <input id="email" name="email" type="email" required autoComplete="username" defaultValue={estado.email} className="campo" />
+        <label className="rotulo" htmlFor="email">E-mail ou usuário</label>
+        <input id="email" name="email" type="text" required autoComplete="username" autoCapitalize="none" defaultValue={estado.email} className="campo" />
       </div>
       <div>
         <label className="rotulo" htmlFor="senha">Senha</label>

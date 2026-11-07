@@ -62,9 +62,14 @@ Cada integração tem cliente real e entra em **modo simulado** quando falta a c
 
 ## Produção (Vercel + Supabase)
 
-1. Crie o projeto no Supabase e use a connection string do **pooler** em `DATABASE_URL`. As migrações rodam sozinhas na primeira requisição. Para dados de exemplo, rode `DATABASE_URL=... npm run seed`.
-2. Na Vercel, defina `SESSION_SECRET`, `DATABASE_URL`, `APP_URL`, `CRON_SECRET` e as chaves das integrações. O `vercel.json` agenda a varredura diária às 06:17 (horário de Brasília).
-3. No painel do Asaas, aponte o webhook para `{APP_URL}/api/webhooks/asaas`.
+1. **Banco:** projeto Supabase com as migrações de `db/migrations/` aplicadas. O app aplica sozinho as que faltarem na primeira requisição.
+2. **Vercel:** defina `DATABASE_URL` com a connection string do **Transaction pooler** do Supabase (Project Settings › Database › Connection string, porta 6543). Defina também `APP_URL` e, quando houver, as chaves das integrações.
+   - `SESSION_SECRET` é opcional: sem ela, a chave de sessão é derivada da `DATABASE_URL`, e trocar a senha do banco encerra as sessões.
+   - `CRON_SECRET` liga a varredura diária do `vercel.json` (06:17, horário de Brasília). Sem ela, a varredura roda pelo botão no backoffice.
+3. **Primeiro acesso:** sem administrador cadastrado, `/login` leva a `/primeiro-acesso`, que cria o administrador da franqueadora e depois se fecha.
+4. **Asaas:** aponte o webhook para `{APP_URL}/api/webhooks/asaas` e defina `ASAAS_WEBHOOK_TOKEN`.
+
+O login aceita e-mail ou nome de usuário. Cada usuário troca a própria senha em **Minha conta**.
 
 **Isolamento:** toda tela roda numa transação com `SET LOCAL ROLE vigia_app` e as variáveis `app.nivel`, `app.franqueado_id` e `app.cliente_id`. As políticas de RLS fazem o banco devolver só o ramo do usuário (franqueadora → franqueado → cliente). Webhooks, login e varredura usam o contexto de sistema.
 

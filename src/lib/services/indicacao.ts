@@ -4,6 +4,7 @@ import { prazoIndicacao, valoresMulta } from "../domain/ctb";
 import { dataBR, diasEntre, hojeISO } from "../domain/dates";
 import { brl } from "../domain/money";
 import { enfileirar } from "../integrations/mensagens";
+import { urlApp } from "../url";
 import { registrarEconomia, registrarEvento, regra, SELECT_MULTA, type MultaRow } from "./multas";
 
 export async function indicarCondutor(db: Db, multaId: string, condutorId: string, usuarioId: string) {
@@ -16,7 +17,7 @@ export async function indicarCondutor(db: Db, multaId: string, condutorId: strin
   const token = randomBytes(18).toString("base64url");
   await db.q("update multas set condutor_id = $2, indicacao_status = 'enviada', indicacao_token = $3 where id = $1", [multaId, condutorId, token]);
   await registrarEvento(db, { multaId, clienteId: m.cliente_id, tipo: "indicacao_enviada", descricao: `Link de aceite enviado para ${cd.nome}`, usuarioId });
-  const link = `${process.env.APP_URL ?? "http://localhost:3000"}/condutor/${token}`;
+  const link = `${urlApp()}/condutor/${token}`;
   await enfileirar(db, {
     clienteId: m.cliente_id, canal: "whatsapp", destino: cd.whatsapp,
     assunto: "Indicação de condutor",

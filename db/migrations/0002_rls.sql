@@ -11,11 +11,11 @@ grant vigia_app to current_user;
 grant usage on schema public to vigia_app;
 grant select, insert, update, delete on all tables in schema public to vigia_app;
 
-create or replace function app_nivel() returns text language sql stable as
+create or replace function app_nivel() returns text language sql stable set search_path = public as
 $$ select coalesce(nullif(current_setting('app.nivel', true), ''), 'nenhum') $$;
-create or replace function app_franqueado() returns uuid language sql stable as
+create or replace function app_franqueado() returns uuid language sql stable set search_path = public as
 $$ select nullif(current_setting('app.franqueado_id', true), '')::uuid $$;
-create or replace function app_cliente() returns uuid language sql stable as
+create or replace function app_cliente() returns uuid language sql stable set search_path = public as
 $$ select nullif(current_setting('app.cliente_id', true), '')::uuid $$;
 
 -- security definer: consulta clientes sem passar pelo RLS (evita recursão).

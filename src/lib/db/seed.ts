@@ -26,21 +26,7 @@ async function semear(db: Db) {
   const d = (n: number) => somarDias(hoje, n);
   const senha = bcrypt.hashSync("vigia123", 10);
 
-  await db.q("insert into configuracao (id) values (1) on conflict do nothing");
-  await db.q(`insert into planos (id, nome, frequencia, preco_placa, consultas_avulsas, inclui, whatsapp, pix_unico) values
-    ('essencial','Essencial','semanal',590,3,'Faça hoje, prazos, alertas por e-mail, Extrato de Economia',false,false),
-    ('profissional','Profissional','adaptativa',990,10,'Essencial + WhatsApp, Pix único, indicação assistida, captura de notificações',true,true),
-    ('frota','Frota','diaria',2990,30,'Profissional + centros de custo, relatórios, condutores, prioridade no suporte',true,true)`);
-  await db.q(`insert into fontes (id, nome, ativa, prioridade, custo) values
-    ('infosimples','Infosimples',true,1,20),
-    ('senatran','Consulta Online Senatran (aguardando autorização)',false,2,91),
-    ('captura','Captura de notificações',true,9,0)`);
-  await db.q(`insert into orgaos (id, nome, uf, esfera, aderente_sne, coberto) values
-    ('BHTRANS','BHTrans','MG','municipal',true,true),
-    ('DETRAN-MG','Detran-MG','MG','estadual',true,true),
-    ('DER-MG','DER-MG','MG','estadual',true,true),
-    ('PREF-CONTAGEM','Prefeitura de Contagem','MG','municipal',false,false),
-    ('CET-SP','CET São Paulo','SP','municipal',true,true)`);
+  // Configuração, planos, fontes e órgãos vêm da migração 0004_dados_base.sql.
 
   const fr = await db.one<{ id: string }>(
     "insert into franqueados (nome, documento, cidade) values ('Franqueado Exemplo','" + gerarCNPJ("334455660001") + "','Belo Horizonte') returning id",

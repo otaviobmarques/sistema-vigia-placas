@@ -1,4 +1,5 @@
 import "server-only";
+import { createHash } from "node:crypto";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { jwtVerify, SignJWT } from "jose";
@@ -9,8 +10,11 @@ const COOKIE_CLIENTE = "vp_cliente";
 
 function segredo() {
   const s = process.env.SESSION_SECRET;
-  if (!s && process.env.NODE_ENV === "production") throw new Error("Defina SESSION_SECRET em produção");
-  return new TextEncoder().encode(s ?? "vigia-placa-dev-nao-use-em-producao");
+  if (s) return new TextEncoder().encode(s);
+  // Sem SESSION_SECRET, deriva a chave da DATABASE_URL (que já é secreta). Trocar a senha do banco encerra as sessões.
+  if (process.env.DATABASE_URL) return new Uint8Array(createHash("sha256").update("vigia-placa:sessao:" + process.env.DATABASE_URL).digest());
+  if (process.env.NODE_ENV === "production") throw new Error("Defina SESSION_SECRET ou DATABASE_URL em produção");
+  return new TextEncoder().encode("vigia-placa-dev-nao-use-em-producao");
 }
 
 export interface Sessao {
