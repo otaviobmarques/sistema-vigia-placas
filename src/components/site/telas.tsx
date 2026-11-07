@@ -36,7 +36,7 @@ export function Moldura({ children, className = "" }: { children: React.ReactNod
     <div className={`overflow-hidden rounded-2xl border border-white/15 bg-white shadow-2xl shadow-black/40 ${className}`}>
       <div className="flex items-center gap-1.5 bg-[#e9edf3] px-3 py-2">
         <span className="h-2.5 w-2.5 rounded-full bg-[#e63946]" /><span className="h-2.5 w-2.5 rounded-full bg-[#ffb703]" /><span className="h-2.5 w-2.5 rounded-full bg-[#12805c]" />
-        <span className="ml-3 truncate rounded-md bg-white px-3 py-0.5 text-[11px] text-suave">vigia-placa.vercel.app</span>
+        <span className="ml-3 truncate rounded-md bg-white px-3 py-0.5 text-[11px] text-suave">www.vigiaplaca.com.br</span>
       </div>
       {children}
     </div>
