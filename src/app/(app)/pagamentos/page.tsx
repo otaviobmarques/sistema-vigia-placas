@@ -5,6 +5,7 @@ import { brl } from "@/lib/domain/money";
 import { Aviso, Cabecalho, Card, ChipDesconto, Mensagem, Vazio } from "@/components/ui";
 import { Placa, Vigi } from "@/components/marca";
 import { gerarPix, removerCarrinho } from "../../actions";
+import { precosDoCliente } from "@/lib/services/precos";
 
 export const metadata = { title: "Pagamentos" };
 
@@ -14,7 +15,7 @@ export default async function Pagamentos({ searchParams }: { searchParams: Promi
   const { cart, historico, cfg } = await noEscopo(s, async (db) => ({
     cart: await carrinho(db, s.clienteId),
     historico: await db.q("select p.*, (select count(*) from pagamento_itens i where i.pagamento_id = p.id) as n from pagamentos p where p.cliente_id = $1 order by p.criado_em desc limit 20", [s.clienteId]),
-    cfg: await db.one("select taxa_conv_tipo, taxa_conv_valor from configuracao"),
+    cfg: await precosDoCliente(db, s.clienteId).then((x) => ({ taxa_conv_tipo: x.taxa.tipo, taxa_conv_valor: x.taxa.valor })),
   }));
   const { itens, resumo } = cart;
   const precisaSne = itens.filter((i) => i.precisaReconhecer);
@@ -63,7 +64,7 @@ export default async function Pagamentos({ searchParams }: { searchParams: Promi
         <section className="card flex flex-col items-center p-6 text-center">
           <Vigi pose="economia" size={110} />
           <h2 className="mt-2 text-lg font-bold">Pague com Pix</h2>
-          <p className="mb-4 text-sm text-suave">Um QR Code só para todas as multas do carrinho. Taxa de conveniência: {cfg!.taxa_conv_tipo === "fixa" ? brl(cfg!.taxa_conv_valor) : `${cfg!.taxa_conv_valor / 100}%`}.</p>
+          <p className="mb-4 text-sm text-suave">Um QR Code só para todas as multas do carrinho. Taxa de conveniência: {cfg!.taxa_conv_tipo === "fixa" ? brl(cfg!.taxa_conv_valor) : `${(cfg!.taxa_conv_valor / 100).toLocaleString("pt-BR")}%`}.</p>
           <form action={gerarPix} className="w-full"><button className="btn-primario w-full" disabled={!itens.length || precisaSne.length > 0}>Gerar Pix de {brl(resumo.total)}</button></form>
           <ol className="mt-5 w-full space-y-1 text-left text-xs text-suave">
             <li>1. Aguardando o Pix</li><li>2. Pagamos os {itens.length || ""} boleto(s) pelo Pague Contas</li><li>3. Comprovantes anexados às multas</li>

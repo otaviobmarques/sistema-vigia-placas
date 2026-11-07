@@ -6,6 +6,7 @@ import { brl } from "@/lib/domain/money";
 import { Cabecalho, Card, Mensagem, Numero, Vazio } from "@/components/ui";
 import { bloquearCliente, entrarCliente, excluirCliente, salvarCobrancaCliente } from "../../actions";
 import { CICLOS, type Ciclo } from "@/lib/domain/ciclo";
+import { CamposPrecosCliente } from "@/components/precos-cliente";
 import { franquiasAtivas } from "@/lib/acesso";
 
 export const metadata = { title: "Clientes" };
@@ -17,7 +18,7 @@ export default async function Carteira({ searchParams }: { searchParams: Promise
   const mes = hojeISO().slice(0, 7);
   const d = await noEscopo(s, async (db) => {
     const clientes = await db.q(
-      `select c.id, c.nome, c.documento, c.segmento, pl.nome as plano, coalesce(c.preco_placa_personalizado, pl.preco_placa) as preco_placa, c.preco_placa_personalizado, c.saving_bps_personalizado, pl.saving_bps as plano_saving_bps, c.forma_cobranca, c.ciclo_fechamento, c.vencimento_dias, c.bloqueado_em, c.motivo_bloqueio, f.nome as franqueado, f.repasse_mensalidade_bps, f.repasse_saving_bps,
+      `select c.id, c.nome, c.documento, c.segmento, pl.nome as plano, coalesce(c.preco_placa_personalizado, pl.preco_placa) as preco_placa, c.preco_placa_personalizado, c.saving_bps_personalizado, pl.saving_bps as plano_saving_bps, c.forma_cobranca, c.ciclo_fechamento, c.vencimento_dias, c.bloqueado_em, c.motivo_bloqueio, c.preco_defesa_personalizado, c.taxa_conv_tipo_personalizado, c.taxa_conv_valor_personalizado, f.nome as franqueado, f.repasse_mensalidade_bps, f.repasse_saving_bps,
          (select count(*) from placas p where p.cliente_id = c.id and p.status <> 'pausada') as placas,
          (select count(*) from multas m where m.cliente_id = c.id and m.estado not in ('paga','cancelada')) as abertas,
          (select coalesce(sum(valor),0) from economias e where e.cliente_id = c.id and e.mes = $1 and e.comprovada) as economia_mes,
@@ -72,18 +73,15 @@ export default async function Carteira({ searchParams }: { searchParams: Promise
                         {s.nivel === "franqueadora" && (
                           <details className="relative">
                             <summary className="link cursor-pointer list-none text-xs">Alterar cobrança</summary>
-                            <form action={salvarCobrancaCliente} className="absolute left-0 z-10 mt-1 w-72 space-y-2 rounded-xl border border-borda bg-white p-3 shadow-lg">
+                            <form action={salvarCobrancaCliente} className="mt-2 w-80 space-y-2 rounded-xl border border-borda bg-white p-3 shadow-lg">
                               <input type="hidden" name="clienteId" value={c.id} />
-                              <div className="grid grid-cols-2 gap-2">
-                                <div><label className="rotulo">R$/placa/mês</label><input name="preco_personalizado" defaultValue={c.preco_placa_personalizado !== null ? (c.preco_placa_personalizado / 100).toFixed(2).replace(".", ",") : ""} placeholder={`plano ${c.plano}`} className="campo py-1.5" /></div>
-                                <div><label className="rotulo">Saving (%)</label><input name="saving_personalizado" defaultValue={c.saving_bps_personalizado !== null ? String(c.saving_bps_personalizado / 100) : ""} placeholder="do plano" className="campo py-1.5" /></div>
-                              </div>
+                              <CamposPrecosCliente c={c} compacto plano={c.plano} />
                               <div><label className="rotulo">Forma de pagamento</label><select name="forma_cobranca" defaultValue={c.forma_cobranca} className="campo py-1.5"><option value="pix">Pix</option><option value="boleto">Boleto</option><option value="cartao">Cartão de crédito</option></select></div>
                               <div className="grid grid-cols-2 gap-2">
                                 <div><label className="rotulo">Fechamento</label><select name="ciclo_fechamento" defaultValue={c.ciclo_fechamento} className="campo py-1.5">{Object.entries(CICLOS).map(([k, v]) => <option key={k} value={k}>{v.split(" (")[0]}</option>)}</select></div>
                                 <div><label className="rotulo">Vence em (dias)</label><input name="vencimento_dias" type="number" min={0} max={60} defaultValue={c.vencimento_dias} className="campo py-1.5" /></div>
                               </div>
-                              <p className="text-[11px] text-suave">Preço e saving em branco = valores do plano. Vale a partir da próxima fatura.</p>
+                              <p className="text-[11px] text-suave">Em branco = valores do plano ou o padrão do sistema. Vale a partir da próxima fatura ou cobrança.</p>
                               <button className="btn-primario btn-sm w-full">Salvar</button>
                             </form>
                           </details>
@@ -105,7 +103,7 @@ export default async function Carteira({ searchParams }: { searchParams: Promise
                             ) : (
                               <details className="relative">
                                 <summary className="cursor-pointer list-none font-semibold text-[#9a5b00] underline">Bloquear</summary>
-                                <form action={bloquearCliente} className="absolute right-0 z-10 mt-1 w-72 space-y-2 rounded-xl border border-borda bg-white p-3 text-left shadow-lg">
+                                <form action={bloquearCliente} className="mt-2 w-72 space-y-2 rounded-xl border border-borda bg-white p-3 text-left shadow-lg">
                                   <input type="hidden" name="clienteId" value={c.id} />
                                   <p className="text-xs">Os usuários do cliente perdem o acesso na hora e as placas param de ser consultadas. Dá para desbloquear depois.</p>
                                   <input name="motivo" placeholder="Motivo (ex.: inadimplência)" className="campo py-1.5" />
@@ -115,7 +113,7 @@ export default async function Carteira({ searchParams }: { searchParams: Promise
                             )}
                             <details className="relative">
                               <summary className="cursor-pointer list-none font-semibold text-rec underline">Excluir</summary>
-                              <form action={excluirCliente} className="absolute right-0 z-10 mt-1 w-80 space-y-2 rounded-xl border-2 border-rec bg-white p-3 text-left shadow-lg">
+                              <form action={excluirCliente} className="mt-2 w-80 space-y-2 rounded-xl border-2 border-rec bg-white p-3 text-left shadow-lg">
                                 <input type="hidden" name="clienteId" value={c.id} />
                                 <p className="text-sm font-bold text-rec">⚠ Excluir {c.nome}?</p>
                                 <p className="text-xs">Os acessos do cliente são encerrados, as {c.placas} placa(s) saem do monitoramento e da cobrança e o cliente some das listas. O histórico de multas, pagamentos e faturas fica guardado. <b>Não dá para desfazer pela tela.</b></p>

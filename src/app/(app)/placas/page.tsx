@@ -5,8 +5,11 @@ import { rotuloFrequencia } from "@/lib/domain/monitoramento";
 import { CampoFrequencia } from "@/components/frequencia";
 import { Cabecalho, Card, Mensagem, Vazio } from "@/components/ui";
 import { Placa } from "@/components/marca";
-import { adicionarPlaca, alterarStatusPlaca, cancelarSolicitacao, consultarAgora, salvarFrequenciaPlaca, salvarSne } from "../../actions";
+import { adicionarPlaca, alterarStatusPlaca, cancelarSolicitacao, consultarAgora, salvarCondutoresPlaca, salvarFrequenciaPlaca, salvarSne } from "../../actions";
 import { ehAdminSistema } from "@/lib/acesso";
+import { listarCondutores } from "@/lib/services/condutores";
+import { PodeDirigir } from "@/components/condutor";
+import { CamposCondutorRapido } from "@/components/condutor-rapido";
 import { LeitorDocumento } from "@/components/leitor-documento";
 import { leitorAtivo } from "@/lib/integrations/leitor";
 
@@ -17,9 +20,11 @@ const STATUS: Record<string, string> = { ativa: "Ativa", pausada: "Pausada", agu
 export default async function Placas({ searchParams }: { searchParams: Promise<{ ok?: string; erro?: string; q?: string }> }) {
   const s = await exigirCliente();
   const sp = await searchParams;
-  const { placas, pedidos, cli } = await noEscopo(s, async (db) => ({
+  const { placas, pedidos, cli, condutores } = await noEscopo(s, async (db) => ({
+    condutores: await listarCondutores(db, s.clienteId),
     placas: await db.q(
-      `select p.*, (select count(*) from multas m where m.placa_id = p.id and m.estado not in ('paga','cancelada')) as abertas
+      `select p.*, (select count(*) from multas m where m.placa_id = p.id and m.estado not in ('paga','cancelada')) as abertas,
+         coalesce((select array_agg(pc.condutor_id::text) from placa_condutores pc where pc.placa_id = p.id), '{}') as condutores
        from placas p where p.cliente_id = $1 ${sp.q ? "and (p.placa ilike $2 or p.apelido ilike $2 or p.grupo ilike $2)" : ""} order by p.status = 'pausada', p.placa`,
       sp.q ? [s.clienteId, `%${sp.q}%`] : [s.clienteId],
     ),
@@ -75,13 +80,36 @@ export default async function Placas({ searchParams }: { searchParams: Promise<{
       <Card titulo="Suas placas" acoes={<form><input name="q" defaultValue={sp.q} placeholder="Buscar placa, apelido ou grupo" className="campo w-64" /></form>}>
         {placas.length === 0 ? <Vazio>Nenhuma placa cadastrada.</Vazio> : (
           <div className="-mx-5 overflow-x-auto">
-            <table className="tabela min-w-[900px]">
-              <thead><tr><th>Placa</th><th>Grupo / centro de custo</th><th>Status</th><th>Última verificação</th><th>Multas abertas</th><th>Adesão SNE</th><th /></tr></thead>
+            <table className="tabela min-w-[1080px]">
+              <thead><tr><th>Placa</th><th>Grupo / centro de custo</th><th>Condutores</th><th>Status</th><th>Última verificação</th><th>Multas abertas</th><th>Adesão SNE</th><th /></tr></thead>
               <tbody>
                 {placas.map((p) => (
                   <tr key={p.id} className={p.status === "pausada" ? "opacity-60" : ""}>
                     <td><Placa placa={p.placa} tamanho="sm" /><div className="mt-1 text-xs text-suave">{p.apelido ?? p.modelo ?? ""} · {p.uf} · Renavam {p.renavam}</div></td>
                     <td className="text-xs">{p.grupo ?? "—"}<div className="text-suave">{p.centro_custo ?? ""}</div></td>
+                    <td className="text-xs">
+                      {condutores.filter((c) => (p.condutores as string[]).includes(c.id)).map((c) => (
+                        <div key={c.id} className="mb-1 flex flex-wrap items-center gap-1"><span className="font-semibold">{c.nome}</span><span className="text-suave">{c.situacao.pontos}/{c.situacao.limite} pts</span><PodeDirigir pode={c.pode} compacto /></div>
+                      ))}
+                      {!(p.condutores as string[]).length && <span className="text-suave">nenhum</span>}
+                      {!soVe && (
+                        <details className="relative">
+                          <summary className="link cursor-pointer list-none">Condutores</summary>
+                          <form action={salvarCondutoresPlaca} className="mt-2 w-80 space-y-2 rounded-xl border border-borda bg-white p-3 shadow-lg">
+                            <input type="hidden" name="placaId" value={p.id} />
+                            <div className="rotulo">Quem dirige a {p.placa}</div>
+                            <div className="max-h-40 space-y-1 overflow-y-auto">
+                              {condutores.filter((c) => c.ativo).map((c) => (
+                                <label key={c.id} className="flex items-center gap-2"><input type="checkbox" name="condutores" value={c.id} defaultChecked={(p.condutores as string[]).includes(c.id)} className="accent-vigia" />{c.nome}<PodeDirigir pode={c.pode} compacto /></label>
+                              ))}
+                              {!condutores.length && <p className="text-suave">Nenhum condutor cadastrado ainda.</p>}
+                            </div>
+                            <CamposCondutorRapido />
+                            <button className="btn-primario btn-sm w-full">Salvar condutores</button>
+                          </form>
+                        </details>
+                      )}
+                    </td>
                     <td className="text-xs">{STATUS[p.status]}{p.motivo_pausa ? ` (${p.motivo_pausa})` : ""}<div className="text-suave">{rotuloFrequencia(p.frequencia ?? cli!.frequencia_padrao).split(" (")[0]}{p.frequencia ? " (própria)" : ""}</div>
                       {ehAdminSistema(s) && (
                         <form action={salvarFrequenciaPlaca} className="mt-1 flex items-center gap-1">
@@ -108,7 +136,7 @@ export default async function Placas({ searchParams }: { searchParams: Promise<{
                       ) : ehCliente ? (
                         <details className="relative inline-block text-left">
                           <summary className="btn-leve btn-sm list-none">{p.status === "pausada" ? "Solicitar reativação" : "Solicitar remoção"}</summary>
-                          <form action={alterarStatusPlaca} className="absolute right-0 z-10 mt-1 w-64 space-y-2 rounded-xl border border-borda bg-white p-3 shadow-lg">
+                          <form action={alterarStatusPlaca} className="mt-2 w-64 space-y-2 rounded-xl border border-borda bg-white p-3 shadow-lg">
                             <input type="hidden" name="placaId" value={p.id} />
                             <input type="hidden" name="status" value={p.status === "pausada" ? "ativa" : "pausada"} />
                             <input name="motivo" placeholder={p.status === "pausada" ? "Observação (opcional)" : "Motivo (ex.: veículo vendido)"} className="campo py-1.5 text-xs" />

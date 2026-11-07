@@ -279,6 +279,8 @@ export async function cadastrarPlacaEquipe(f: FormData) {
       const c = await db.one("select 1 from clientes where id = $1 and ativo and excluido_em is null and bloqueado_em is null", [clienteId]);
       if (!c) throw new Error("Cliente não encontrado, bloqueado ou excluído.");
       const novo = await inserirPlaca(db, clienteId, { placa: (pv as any).placa, renavam: (rv as any).renavam, uf: s(f, "uf").toUpperCase(), apelido: s(f, "apelido"), grupo: s(f, "grupo"), centro_custo: s(f, "centro_custo"), sne: s(f, "sne") || null });
+      const condutores = await condutoresDoFormulario(db, clienteId, f);
+      if (condutores.length) await vincularCondutoresAPlaca(db, clienteId, novo, condutores);
       await auditar(db, { usuarioId: sessao.usuarioId, clienteId, acao: "placa_cadastrada", entidade: "placa", entidadeId: novo, dados: { placa: (pv as any).placa } });
       return novo;
     });
@@ -497,7 +499,58 @@ function camposCondutor(f: FormData) {
     email: s(f, "email") || null,
     pontos: num("pontos_12m"),
     gravissimas: num("gravissimas_12m"),
+    impedido: f.get("impedido") === "on",
+    motivoImpedimento: s(f, "motivo_impedimento") || null,
   };
+}
+
+async function inserirCondutor(db: Db, clienteId: string, c: ReturnType<typeof camposCondutor>) {
+  const id = randomUUID();
+  await db.q(
+    `insert into condutores (id, cliente_id, nome, cpf, cnh, cnh_categoria, cnh_validade, toxicologico_validade, whatsapp, email, pontos_12m, gravissimas_12m, impedido, motivo_impedimento)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+    [id, clienteId, c.nome, c.cpf, c.cnh, c.categoria, c.validade, c.toxicologico, c.whatsapp, c.email, c.pontos, c.gravissimas, c.impedido, c.impedido ? c.motivoImpedimento : null],
+  );
+  return id;
+}
+
+/** Placas que este condutor dirige (substitui os vínculos). A primeira vira principal onde a placa ainda não tem um. */
+async function vincularPlacasAoCondutor(db: Db, clienteId: string, condutorId: string, placas: string[]) {
+  await db.q("delete from placa_condutores where cliente_id = $1 and condutor_id = $2 and not (placa_id = any($3::uuid[]))", [clienteId, condutorId, placas]);
+  for (const p of placas) await db.q("insert into placa_condutores (placa_id, condutor_id, cliente_id) select id, $2, cliente_id from placas where id = $1 and cliente_id = $3 on conflict do nothing", [p, condutorId, clienteId]);
+  await db.q("update placas set condutor_principal_id = null where cliente_id = $1 and condutor_principal_id = $2 and not (id = any($3::uuid[]))", [clienteId, condutorId, placas]);
+  if (placas.length) await db.q("update placas set condutor_principal_id = $2 where cliente_id = $1 and id = any($3::uuid[]) and condutor_principal_id is null", [clienteId, condutorId, placas]);
+}
+
+/** Condutores de uma placa (substitui os vínculos). */
+async function vincularCondutoresAPlaca(db: Db, clienteId: string, placaId: string, condutores: string[]) {
+  await db.q("delete from placa_condutores where cliente_id = $1 and placa_id = $2 and not (condutor_id = any($3::uuid[]))", [clienteId, placaId, condutores]);
+  for (const c of condutores) await db.q("insert into placa_condutores (placa_id, condutor_id, cliente_id) select $1, id, cliente_id from condutores where id = $2 and cliente_id = $3 on conflict do nothing", [placaId, c, clienteId]);
+  await db.q("update placas set condutor_principal_id = case when condutor_principal_id = any($3::uuid[]) then condutor_principal_id else $4 end where id = $1 and cliente_id = $2", [placaId, clienteId, condutores, condutores[0] ?? null]);
+}
+
+/** Condutores vinculados + um condutor novo opcional (prefixo novo_) informados no cadastro da placa. */
+async function condutoresDoFormulario(db: Db, clienteId: string, f: FormData) {
+  const ids = f.getAll("condutores").map(String).filter(Boolean);
+  if (s(f, "novo_nome")) {
+    const g = (k: string) => s(f, `novo_${k}`);
+    ids.push(await inserirCondutor(db, clienteId, {
+      nome: g("nome"), cpf: g("cpf").replace(/\D/g, "") || null, cnh: g("cnh") || null, categoria: g("cnh_categoria") || null,
+      validade: g("cnh_validade") || null, toxicologico: null, whatsapp: g("whatsapp") || null, email: null, pontos: Math.max(0, Math.min(99, Number(g("pontos_12m") || 0))), gravissimas: 0,
+      impedido: f.get("novo_impedido") === "on", motivoImpedimento: g("motivo_impedimento") || null,
+    }));
+  }
+  return ids;
+}
+
+export async function salvarCondutoresPlaca(f: FormData) {
+  const sessao = await exigirCliente();
+  await exigirPermissao(sessao, "editar", "/placas");
+  await noEscopo(sessao, async (db) => {
+    await vincularCondutoresAPlaca(db, sessao.clienteId, s(f, "placaId"), await condutoresDoFormulario(db, sessao.clienteId, f));
+    await auditar(db, { usuarioId: sessao.usuarioId, clienteId: sessao.clienteId, acao: "condutores_placa", entidade: "placa", entidadeId: s(f, "placaId") });
+  });
+  ir("/placas", { ok: "Condutores da placa atualizados." });
 }
 
 export async function adicionarCondutor(f: FormData) {
@@ -505,13 +558,10 @@ export async function adicionarCondutor(f: FormData) {
   await exigirPermissao(sessao, "editar", "/condutores");
   const c = camposCondutor(f);
   if (!c.nome) ir("/condutores", { erro: "Informe o nome." });
-  await noEscopo(sessao, (db) =>
-    db.q(
-      `insert into condutores (cliente_id, nome, cpf, cnh, cnh_categoria, cnh_validade, toxicologico_validade, whatsapp, email, pontos_12m, gravissimas_12m)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-      [sessao.clienteId, c.nome, c.cpf, c.cnh, c.categoria, c.validade, c.toxicologico, c.whatsapp, c.email, c.pontos, c.gravissimas],
-    ),
-  );
+  await noEscopo(sessao, async (db) => {
+    const id = await inserirCondutor(db, sessao.clienteId, c);
+    await vincularPlacasAoCondutor(db, sessao.clienteId, id, f.getAll("placas").map(String));
+  });
   ir("/condutores", { ok: "Condutor cadastrado." });
 }
 
@@ -525,12 +575,10 @@ export async function atualizarCondutor(f: FormData) {
   await noEscopo(sessao, async (db) => {
     await db.q(
       `update condutores set nome=$3, cpf=$4, cnh=$5, cnh_categoria=$6, cnh_validade=$7, toxicologico_validade=$8, whatsapp=$9, email=$10,
-         pontos_12m=$11, gravissimas_12m=$12, ativo=$13 where id = $1 and cliente_id = $2`,
-      [id, sessao.clienteId, c.nome, c.cpf, c.cnh, c.categoria, c.validade, c.toxicologico, c.whatsapp, c.email, c.pontos, c.gravissimas, f.get("ativo") === "on"],
+         pontos_12m=$11, gravissimas_12m=$12, ativo=$13, impedido=$14, motivo_impedimento=$15 where id = $1 and cliente_id = $2`,
+      [id, sessao.clienteId, c.nome, c.cpf, c.cnh, c.categoria, c.validade, c.toxicologico, c.whatsapp, c.email, c.pontos, c.gravissimas, f.get("ativo") === "on", c.impedido, c.impedido ? c.motivoImpedimento : null],
     );
-    // Placas em que este é o condutor principal (usado no rateio e como sugestão de indicação).
-    await db.q("update placas set condutor_principal_id = null where cliente_id = $1 and condutor_principal_id = $2 and not (id = any($3::uuid[]))", [sessao.clienteId, id, placas]);
-    if (placas.length) await db.q("update placas set condutor_principal_id = $2 where cliente_id = $1 and id = any($3::uuid[])", [sessao.clienteId, id, placas]);
+    await vincularPlacasAoCondutor(db, sessao.clienteId, id, placas);
     await auditar(db, { usuarioId: sessao.usuarioId, clienteId: sessao.clienteId, acao: "condutor_atualizado", entidade: "condutor", entidadeId: id });
   });
   ir("/condutores", { ok: `${c.nome} atualizado.` });
@@ -705,7 +753,7 @@ export async function alternarUsuario(f: FormData) {
 // ---------------- Onboarding (T02) ----------------
 
 /** Preço/saving negociados para um cliente (só a equipe Vigia Placa). Vazio = valor do plano. */
-function lerPrecoPersonalizado(f: FormData, volta: string, sessao: Sessao): { preco: number | null; saving: number | null } | null {
+function lerPrecoPersonalizado(f: FormData, volta: string, sessao: Sessao): { preco: number | null; saving: number | null; defesa: number | null; taxaTipo: string | null; taxaValor: number | null } | null {
   if (!ehEquipeVigia(sessao)) return null;
   const p = s(f, "preco_personalizado");
   const sv = s(f, "saving_personalizado").replace(",", ".").replace("%", "");
@@ -713,7 +761,14 @@ function lerPrecoPersonalizado(f: FormData, volta: string, sessao: Sessao): { pr
   const saving = sv ? Math.round(Number(sv) * 100) : null;
   if (preco !== null && !(preco >= 0)) ir(volta, { erro: "Preço por placa inválido." });
   if (saving !== null && !(saving >= 0 && saving <= 10000)) ir(volta, { erro: "O saving deve ficar entre 0% e 100%." });
-  return { preco, saving };
+  const d = s(f, "defesa_personalizado");
+  const defesa = d ? parseReais(d) : null;
+  if (defesa !== null && !(defesa >= 0)) ir(volta, { erro: "Preço da defesa inválido." });
+  const taxaTipo = s(f, "taxa_tipo_personalizado") === "percentual" ? "percentual" : "fixa";
+  const tv = s(f, "taxa_valor_personalizado").replace("%", "");
+  const taxaValor = tv === "" ? null : taxaTipo === "fixa" ? parseReais(tv) : Math.round(Number(tv.replace(",", ".")) * 100);
+  if (taxaValor !== null && !(taxaValor >= 0) || (taxaTipo === "percentual" && taxaValor !== null && taxaValor > 10000)) ir(volta, { erro: "Taxa de conveniência inválida." });
+  return { preco, saving, defesa, taxaTipo: taxaValor === null ? null : taxaTipo, taxaValor };
 }
 
 /** Forma de pagamento, ciclo de fechamento e prazo de vencimento (dias após o fechamento). */
@@ -737,8 +792,9 @@ export async function salvarCobrancaCliente(f: FormData) {
   const clienteId = s(f, "clienteId");
   await noEscopo(sessao, async (db) => {
     await db.q(
-      "update clientes set preco_placa_personalizado = $2, saving_bps_personalizado = $3, forma_cobranca = $4, ciclo_fechamento = $5, vencimento_dias = $6 where id = $1",
-      [clienteId, preco.preco, preco.saving, cob.forma, cob.ciclo, cob.vencimento],
+      `update clientes set preco_placa_personalizado = $2, saving_bps_personalizado = $3, forma_cobranca = $4, ciclo_fechamento = $5, vencimento_dias = $6,
+         preco_defesa_personalizado = $7, taxa_conv_tipo_personalizado = $8, taxa_conv_valor_personalizado = $9 where id = $1`,
+      [clienteId, preco.preco, preco.saving, cob.forma, cob.ciclo, cob.vencimento, preco.defesa, preco.taxaTipo, preco.taxaValor],
     );
     await auditar(db, { usuarioId: sessao.usuarioId, clienteId, acao: "cobranca_cliente", entidade: "cliente", entidadeId: clienteId, dados: { ...preco, ...cob } });
   });
@@ -807,7 +863,12 @@ export async function criarCliente(f: FormData) {
          ehAdminSistema(sessao) ? lerFrequencia(f, "frequencia") ?? "adaptativa" : normalizarFrequencia((await db.one("select frequencia from planos where id = $1", [s(f, "plano")]))?.frequencia),
          ip, cfg!.termo_versao, novoId],
       );
-      if (preco) await db.q("update clientes set preco_placa_personalizado = $2, saving_bps_personalizado = $3 where id = $1", [novoId, preco.preco, preco.saving]);
+      if (preco) {
+        await db.q(
+          "update clientes set preco_placa_personalizado = $2, saving_bps_personalizado = $3, preco_defesa_personalizado = $4, taxa_conv_tipo_personalizado = $5, taxa_conv_valor_personalizado = $6 where id = $1",
+          [novoId, preco.preco, preco.saving, preco.defesa, preco.taxaTipo, preco.taxaValor],
+        );
+      }
       const cob = lerCobranca(f);
       await db.q("update clientes set ciclo_fechamento = $2, vencimento_dias = $3 where id = $1", [novoId, cob.ciclo, cob.vencimento]);
       await auditar(db, { usuarioId: sessao.usuarioId, clienteId: novoId, acao: "cliente_criado", entidade: "cliente", entidadeId: novoId, dados: { aceite_ip: ip } });

@@ -209,3 +209,18 @@ describe("regra de consulta", () => {
     expect(custoPorConsulta(escolherFontes({ ...base, estrategia: "ambas" }), custos)).toBe(88);
   });
 });
+
+describe("pode dirigir", () => {
+  const sit = (o: Partial<Parameters<typeof situacaoCondutor>[0]> = {}) =>
+    situacaoCondutor({ pontosInformados: 0, gravissimasInformadas: 0, pontosIndicados: 0, gravissimasIndicadas: 0, cnhValidade: "2027-01-01", toxicologicoValidade: null, ...o }, "2026-11-07");
+  it("libera quem está em dia e barra CNH vencida, limite de pontos e impedimento", async () => {
+    const { podeDirigir } = await import("./condutores");
+    expect(podeDirigir({ ativo: true }, sit()).pode).toBe(true);
+    expect(podeDirigir({ ativo: true }, sit({ cnhValidade: "2026-10-01" }))).toMatchObject({ pode: false, motivos: ["CNH vencida"] });
+    expect(podeDirigir({ ativo: true }, sit({ pontosInformados: 40 })).pode).toBe(false);
+    expect(podeDirigir({ ativo: true, impedido: true, motivo_impedimento: "CNH suspensa" }, sit()).motivos).toContain("impedido: CNH suspensa");
+    expect(podeDirigir({ ativo: true }, sit({ cnhValidade: null }))).toMatchObject({ pode: true, motivos: ["validade da CNH não informada"] });
+    expect(podeDirigir({ ativo: true, cnh_categoria: "E" }, sit({ toxicologicoValidade: "2026-11-01" })).motivos).toContain("exame toxicológico vencido");
+    expect(podeDirigir({ ativo: true, cnh_categoria: "B" }, sit({ toxicologicoValidade: "2026-11-01" })).pode).toBe(true);
+  });
+});

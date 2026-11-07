@@ -4,6 +4,8 @@ import { Cabecalho, Card, Mensagem } from "@/components/ui";
 import { LeitorDocumento } from "@/components/leitor-documento";
 import { leitorAtivo } from "@/lib/integrations/leitor";
 import { cadastrarPlacaEquipe } from "../../../actions";
+import { listarCondutores } from "@/lib/services/condutores";
+import { ClienteECondutores } from "./cliente-condutores";
 
 export const metadata = { title: "Cadastrar placa" };
 const UFS = "AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO".split(" ");
@@ -12,12 +14,19 @@ const UFS = "AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO R
 export default async function NovaPlaca({ searchParams }: { searchParams: Promise<{ ok?: string; erro?: string; cliente?: string }> }) {
   const s = await exigirSessao(["franqueadora", "franqueado"]);
   const sp = await searchParams;
-  const clientes = await noEscopo(s, (db) =>
-    db.q<{ id: string; nome: string; documento: string; placas: number }>(
+  const { clientes, condutores } = await noEscopo(s, async (db) => {
+    const clientes = await db.q<{ id: string; nome: string; documento: string; placas: number }>(
       `select c.id, c.nome, c.documento, (select count(*) from placas p where p.cliente_id = c.id and p.status <> 'pausada') as placas
        from clientes c where c.ativo and c.excluido_em is null and c.bloqueado_em is null order by c.nome`,
-    ),
-  );
+    );
+    const condutores = [];
+    for (const c of clientes) {
+      for (const k of await listarCondutores(db, c.id)) {
+        if (k.ativo) condutores.push({ id: k.id, nome: k.nome, cliente_id: c.id, pontos: k.situacao.pontos, limite: k.situacao.limite, pode: k.pode });
+      }
+    }
+    return { clientes: clientes.map((c) => ({ ...c, placas: Number(c.placas) })), condutores };
+  });
   return (
     <div className="mx-auto max-w-3xl">
       <Cabecalho titulo="Cadastrar placa" sub="Lance uma placa de cada vez. A placa entra no monitoramento e a primeira consulta é feita na hora." acoes={<Link href="/placas/importar" className="btn-contorno">Várias placas (planilha)</Link>} />
@@ -27,12 +36,7 @@ export default async function NovaPlaca({ searchParams }: { searchParams: Promis
           <p className="text-sm text-suave">Nenhum cliente ativo. <Link href="/clientes/novo" className="link">Cadastre um cliente</Link> primeiro.</p>
         ) : (
           <form action={cadastrarPlacaEquipe} className="grid gap-3 sm:grid-cols-3">
-            <div className="sm:col-span-3"><label className="rotulo">Cliente</label>
-              <select name="clienteId" required defaultValue={sp.cliente ?? ""} className="campo">
-                <option value="" disabled>Escolha o cliente…</option>
-                {clientes.map((c) => <option key={c.id} value={c.id}>{c.nome} · {c.documento} · {c.placas} placa(s)</option>)}
-              </select>
-            </div>
+            <ClienteECondutores clientes={clientes} condutores={condutores} inicial={sp.cliente} />
             <div className="sm:col-span-3"><LeitorDocumento foco="crlv" ativo={leitorAtivo()} rotulo="CRLV-e em PDF ou foto (opcional, preenche placa e Renavam)" /></div>
             <div><label className="rotulo">Placa</label><input name="placa" required placeholder="ABC1D23" className="campo uppercase" /></div>
             <div><label className="rotulo">Renavam</label><input name="renavam" required inputMode="numeric" placeholder="11 dígitos" className="campo" /></div>
