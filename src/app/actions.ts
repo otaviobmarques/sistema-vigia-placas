@@ -107,7 +107,7 @@ export async function entrarCliente(f: FormData) {
 export async function sairCliente() {
   const sessao = await exigirSessao(["franqueado", "franqueadora"]);
   await escolherCliente(null);
-  redirect(ehAdminSistema(sessao) ? "/backoffice" : "/carteira");
+  redirect(ehAdminSistema(sessao) ? "/backoffice" : sessao.nivel === "franqueadora" ? "/painel" : "/carteira");
 }
 
 export async function iniciar2fa() {
