@@ -2,7 +2,7 @@ import type { Db } from "../db";
 import { consultarMultas } from "../integrations/infosimples";
 import { enfileirar } from "../integrations/mensagens";
 import { avisoDevido, proximaConsulta, type Frequencia } from "../domain/monitoramento";
-import { hojeISO, dataBR } from "../domain/dates";
+import { hojeISO, dataBR, diasEntre, somarDias } from "../domain/dates";
 import { melhorValorHoje, prazoIndicacao, valoresMulta } from "../domain/ctb";
 import { brl } from "../domain/money";
 import { regra, registrarEvento, SELECT_MULTA, type MultaRow } from "./multas";
@@ -135,14 +135,42 @@ export async function dispararAvisos(db: Db) {
       const ant = avisoDevido(pr.data, hoje, m.alertas_antecedencias, ja);
       if (ant === null) continue;
       await db.q("insert into alertas_enviados (multa_id, prazo, antecedencia, cliente_id) values ($1,$2,$3,$4) on conflict do nothing", [m.id, pr.tipo, ant, m.cliente_id]);
-      const corpo = `Placa ${m.placa}: ${pr.texto.replace("{d}", String(ant))}.`;
+      const faltam = diasEntre(hoje, pr.data);
+      const corpo = `Placa ${m.placa}: ${pr.texto.replace("{d}", String(faltam))}.`;
       for (const canal of m.alertas_canais) {
-        await enfileirar(db, { clienteId: m.cliente_id, canal: canal as any, destino: canal === "email" ? m.email : m.whatsapp, assunto: `Prazo em ${ant} dia(s) · ${m.placa}`, corpo });
+        await enfileirar(db, { clienteId: m.cliente_id, canal: canal as any, destino: canal === "email" ? m.email : m.whatsapp, assunto: `Prazo em ${faltam} dia(s) · ${m.placa}`, corpo });
       }
       // Escalonamento: no último aviso, o franqueado também é avisado.
       if (ant <= 1 && m.franqueado_email) {
         await enfileirar(db, { clienteId: m.cliente_id, canal: "email", destino: m.franqueado_email, assunto: `[Escalonamento] ${m.cliente_nome} · ${m.placa}`, corpo });
       }
+      n++;
+    }
+  }
+  n += await avisosCondutores(db);
+  return n;
+}
+
+/** CNH e exame toxicológico a vencer: avisos com 30, 15, 7 e 1 dia de antecedência. */
+export async function avisosCondutores(db: Db) {
+  const hoje = hojeISO();
+  const ANTECEDENCIAS = [30, 15, 7, 1];
+  const condutores = await db.q(
+    `select c.*, cl.email as cliente_email, cl.nome as cliente_nome from condutores c join clientes cl on cl.id = c.cliente_id
+     where c.ativo and (c.cnh_validade between $1 and $2 or c.toxicologico_validade between $1 and $2)`,
+    [hoje, somarDias(hoje, 30)],
+  );
+  let n = 0;
+  for (const c of condutores) {
+    for (const [tipo, data, rotulo, titulo] of [["cnh", c.cnh_validade, "a CNH", "da CNH"], ["toxicologico", c.toxicologico_validade, "o exame toxicológico", "do exame toxicológico"]] as const) {
+      if (!data) continue;
+      const ja = (await db.q<{ antecedencia: number }>("select antecedencia from alertas_condutor where condutor_id = $1 and tipo = $2 and referencia = $3", [c.id, tipo, data])).map((r) => r.antecedencia);
+      const ant = avisoDevido(data, hoje, ANTECEDENCIAS, ja);
+      if (ant === null) continue;
+      await db.q("insert into alertas_condutor (condutor_id, cliente_id, tipo, referencia, antecedencia) values ($1,$2,$3,$4,$5) on conflict do nothing", [c.id, c.cliente_id, tipo, data, ant]);
+      const corpo = `${c.nome}: ${rotulo} vence em ${dataBR(data)} (${diasEntre(hoje, data) === 0 ? "hoje" : `em ${diasEntre(hoje, data)} dia(s)`}). Dirigir com o documento vencido é infração gravíssima.`;
+      await enfileirar(db, { clienteId: c.cliente_id, canal: "email", destino: c.cliente_email, assunto: `Vencimento ${titulo} · ${c.nome}`, corpo });
+      await enfileirar(db, { clienteId: c.cliente_id, canal: "whatsapp", destino: c.whatsapp, assunto: `Vencimento ${titulo}`, corpo });
       n++;
     }
   }

@@ -49,6 +49,7 @@ Testes das regras de negócio: `npm test` · checagem de tipos: `npm run typeche
 | Aprovação dupla: pagamento acima do limite do cliente espera a aprovação de outra pessoa antes do Pix; um mesmo boleto nunca entra em dois pagamentos abertos | `src/lib/services/pagamentos.ts` |
 | Cadastro com dados públicos do CNPJ (BrasilAPI) | `src/app/api/cnpj/route.ts` |
 | M14 Relatórios por infração, placa, condutor, centro de custo (rateio), órgão, horário e mês, com exportação Excel | `/relatorios`, `src/lib/services/relatorios.ts` |
+| M13 Condutores: CNH (categoria e validade), exame toxicológico, pontos de 12 meses somados das multas indicadas, nota 0–100, avisos de vencimento (30/15/7/1 dias), sugestão do condutor principal e alerta quando a indicação leva ao limite do art. 261 | `/condutores`, `src/lib/domain/condutores.ts` |
 | M15 Painel do franqueado · M16 Backoffice · M17 PWA (manifest + navegação inferior) | `/carteira`, `/backoffice`, `src/app/manifest.ts` |
 
 Regras do CTB automatizadas (art. 257 §7º e §8º, 258, 261, 281, 284) ficam em `src/lib/domain/ctb.ts`, com testes que reproduzem os números das telas desenhadas (R$ 130,16 → R$ 104,13 / R$ 78,10; NIC R$ 390,46; carrinho R$ 338,41 com R$ 117,14 de economia; simulação 12.3 do saving). Dinheiro é sempre inteiro em centavos.
@@ -70,7 +71,7 @@ Cada integração tem cliente real e entra em **modo simulado** quando falta a c
 1. **Banco:** projeto Supabase com as migrações de `db/migrations/` aplicadas **antes** de cada deploy (pelo SQL Editor ou pelo conector do Supabase). O usuário do app não altera a estrutura do banco: se faltar alguma migração, o app recusa subir e o erro diz qual. Com `VIGIA_MIGRAR=1` e um usuário dono do schema, ele aplica sozinho.
 2. **Vercel:** defina `DATABASE_URL` com a connection string do **Transaction pooler** do Supabase (Project Settings › Database › Connection string, porta 6543). Defina também `APP_URL` e, quando houver, as chaves das integrações.
    - `SESSION_SECRET` é opcional: sem ela, a chave de sessão é derivada da `DATABASE_URL`, e trocar a senha do banco encerra as sessões.
-   - `CRON_SECRET` liga a varredura diária do `vercel.json` (06:17, horário de Brasília). Sem ela, a varredura roda pelo botão no backoffice.
+   - `CRON_SECRET` liga a varredura diária do `vercel.json` (06:17, horário de Brasília): consultas, multas vencidas e avisos de prazo, CNH e toxicológico. Sem ela, a varredura roda pelo botão no backoffice.
 3. **Primeiro acesso:** sem administrador cadastrado, `/login` leva a `/primeiro-acesso`, que cria o administrador da franqueadora e depois se fecha.
 4. **Asaas:** aponte o webhook para `{APP_URL}/api/webhooks/asaas` e defina `ASAAS_WEBHOOK_TOKEN`.
 
@@ -82,7 +83,7 @@ O login aceita e-mail ou nome de usuário. Cada usuário troca a própria senha 
 
 - **Preços:** os planos vêm com valores de partida editáveis (R$ 5,90 / 9,90 / 29,90), além de saving de 20%, taxa de conveniência de R$ 4,90 e defesa a R$ 149,00. Fechar após as cotações (seção 19).
 - **Revisão jurídica** do texto legal, dos termos de uso e do fluxo de pagamento (enquadramento como instituição de pagamento).
-- **Não implementado no MVP:** login com Google, despachante de WhatsApp/e-mail, PDF do extrato gerado no servidor (hoje é via impressão) e itens da fase 2 e 3 (M13 completo, M18).
+- **Não implementado no MVP:** login com Google, despachante de WhatsApp/e-mail, PDF do extrato gerado no servidor (hoje é via impressão) e itens da fase 3 (M18).
 - **Armazenamento de arquivos:** fotos de notificação ficam no banco até 4 MB; em produção, mover para o Supabase Storage. A CNH do condutor registra só o nome do arquivo.
 
 ## Estrutura

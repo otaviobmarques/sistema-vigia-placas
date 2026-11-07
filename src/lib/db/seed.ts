@@ -56,10 +56,15 @@ async function semear(db: Db) {
   );
 
   const condutores: Record<string, string> = {};
-  for (const [nome, cpf, pts] of [["Carlos Souza", "11144477735", 9], ["Ana Lima", "22255588846", 4], ["Pedro Rocha", "33366699957", 21]] as const) {
+  for (const [nome, cpf, pts, cat, cnhVal, toxVal] of [
+    ["Carlos Souza", "11144477735", 0, "D", 400, 20],
+    ["Ana Lima", "22255588846", 0, "B", 12, null],
+    ["Pedro Rocha", "33366699957", 6, "E", 700, -5],
+  ] as const) {
     const r = await db.one<{ id: string }>(
-      "insert into condutores (cliente_id, nome, cpf, cnh, whatsapp, pontos_12m, gravissimas_12m) values ($1,$2,$3,$4,$5,$6,$7) returning id",
-      [T, nome, cpf, `0${cpf.slice(0, 10)}`, "+55319888800" + cpf[0] + cpf[1], pts, pts > 20 ? 1 : 0],
+      `insert into condutores (cliente_id, nome, cpf, cnh, whatsapp, pontos_12m, gravissimas_12m, cnh_categoria, cnh_validade, toxicologico_validade)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning id`,
+      [T, nome, cpf, `0${cpf.slice(0, 10)}`, "+55319888800" + cpf[0] + cpf[1], pts, 0, cat, d(cnhVal), toxVal === null ? null : d(toxVal)],
     );
     condutores[nome] = r!.id;
   }
@@ -102,6 +107,8 @@ async function semear(db: Db) {
   const pQWE = await placa(T, "QWE5R67", { apelido: "Saveiro 01", grupo: "Comercial", cc: "Vendas", modelo: "VW Saveiro", sne: "2026-10-28" });
   const pDFG = await placa(T, "DFG8H90", { apelido: "Caminhão 01", grupo: "Frota BH", cc: "Logística" });
   for (const p of ["KLM3N45", "BRA2E19", "PQR6S78", "TUV1W23", "GHI4J56"]) await placa(T, p, { grupo: "Frota BH", cc: "Logística", horas: 5 });
+  await db.q("update placas set condutor_principal_id = $2 where cliente_id = $1 and placa in ('RST4E56','HJK7L89','DFG8H90')", [T, condutores["Carlos Souza"]]);
+  await db.q("update placas set condutor_principal_id = $2 where cliente_id = $1 and placa in ('ABC1D23','XYZ9A87')", [T, condutores["Ana Lima"]]);
 
   await multa(T, pRST, { orgao: "DER-MG", desc: "Excesso de velocidade de 20% a 50%", cod: "7463", grav: "grave", infracao: d(-36), notif: d(-28), venc: d(12), local: "MG-050, km 42" });
   const mABC = await multa(T, pABC, { orgao: "BHTRANS", desc: "Estacionar em local proibido", cod: "5452", grav: "media", infracao: d(-17), notif: d(-8), venc: d(6), estado: "condutor_indicado", condutor: condutores["Ana Lima"], indic: "aceita", detect: d(-15) });
@@ -141,7 +148,7 @@ async function semear(db: Db) {
     const id = await multa(T, placaIds[pl], {
       orgao: i % 2 ? "BHTRANS" : "DETRAN-MG", desc: grav === "media" ? "Estacionar em local proibido" : grav === "grave" ? "Excesso de velocidade de 20% a 50%" : grav === "leve" ? "Estacionar afastado da guia" : "Avançar sinal vermelho",
       cod: grav === "media" ? "5452" : grav === "grave" ? "7463" : grav === "leve" ? "5428" : "6050", grav, infracao: somarDias(inf, -10), notif: somarDias(inf, -3), venc: somarDias(inf, 25),
-      estado: tipo === "nic" ? "condutor_indicado" : "paga", condutor: tipo === "nic" ? condutores["Carlos Souza"] : null, indic: tipo === "nic" ? "protocolada" : null,
+      estado: tipo === "nic" ? "condutor_indicado" : "paga", condutor: tipo === "nic" ? condutores[["Carlos Souza", "Ana Lima", "Pedro Rocha"][i % 3]] : null, indic: tipo === "nic" ? "protocolada" : null,
     });
     if (tipo === "nic") {
       await db.q("update multas set estado = 'paga' where id = $1", [id]);

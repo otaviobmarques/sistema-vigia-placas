@@ -340,16 +340,56 @@ export async function importarPlacas(f: FormData) {
 
 // ---------------- Condutores ----------------
 
+function camposCondutor(f: FormData) {
+  const num = (k: string) => Math.max(0, Math.min(99, Number(s(f, k) || 0)));
+  return {
+    nome: s(f, "nome"),
+    cpf: s(f, "cpf").replace(/\D/g, "") || null,
+    cnh: s(f, "cnh") || null,
+    categoria: s(f, "cnh_categoria") || null,
+    validade: s(f, "cnh_validade") || null,
+    toxicologico: s(f, "toxicologico_validade") || null,
+    whatsapp: s(f, "whatsapp") || null,
+    email: s(f, "email") || null,
+    pontos: num("pontos_12m"),
+    gravissimas: num("gravissimas_12m"),
+  };
+}
+
 export async function adicionarCondutor(f: FormData) {
   const sessao = await exigirCliente();
   await exigirPermissao(sessao, "editar", "/condutores");
-  if (!s(f, "nome")) ir("/condutores", { erro: "Informe o nome." });
+  const c = camposCondutor(f);
+  if (!c.nome) ir("/condutores", { erro: "Informe o nome." });
   await noEscopo(sessao, (db) =>
-    db.q("insert into condutores (cliente_id, nome, cpf, cnh, whatsapp, email) values ($1,$2,$3,$4,$5,$6)", [
-      sessao.clienteId, s(f, "nome"), s(f, "cpf").replace(/\D/g, "") || null, s(f, "cnh") || null, s(f, "whatsapp") || null, s(f, "email") || null,
-    ]),
+    db.q(
+      `insert into condutores (cliente_id, nome, cpf, cnh, cnh_categoria, cnh_validade, toxicologico_validade, whatsapp, email, pontos_12m, gravissimas_12m)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [sessao.clienteId, c.nome, c.cpf, c.cnh, c.categoria, c.validade, c.toxicologico, c.whatsapp, c.email, c.pontos, c.gravissimas],
+    ),
   );
   ir("/condutores", { ok: "Condutor cadastrado." });
+}
+
+export async function atualizarCondutor(f: FormData) {
+  const sessao = await exigirCliente();
+  await exigirPermissao(sessao, "editar", "/condutores");
+  const id = s(f, "id");
+  const c = camposCondutor(f);
+  if (!c.nome) ir("/condutores", { erro: "Informe o nome." });
+  const placas = f.getAll("placas").map(String);
+  await noEscopo(sessao, async (db) => {
+    await db.q(
+      `update condutores set nome=$3, cpf=$4, cnh=$5, cnh_categoria=$6, cnh_validade=$7, toxicologico_validade=$8, whatsapp=$9, email=$10,
+         pontos_12m=$11, gravissimas_12m=$12, ativo=$13 where id = $1 and cliente_id = $2`,
+      [id, sessao.clienteId, c.nome, c.cpf, c.cnh, c.categoria, c.validade, c.toxicologico, c.whatsapp, c.email, c.pontos, c.gravissimas, f.get("ativo") === "on"],
+    );
+    // Placas em que este é o condutor principal (usado no rateio e como sugestão de indicação).
+    await db.q("update placas set condutor_principal_id = null where cliente_id = $1 and condutor_principal_id = $2 and not (id = any($3::uuid[]))", [sessao.clienteId, id, placas]);
+    if (placas.length) await db.q("update placas set condutor_principal_id = $2 where cliente_id = $1 and id = any($3::uuid[])", [sessao.clienteId, id, placas]);
+    await auditar(db, { usuarioId: sessao.usuarioId, clienteId: sessao.clienteId, acao: "condutor_atualizado", entidade: "condutor", entidadeId: id });
+  });
+  ir("/condutores", { ok: `${c.nome} atualizado.` });
 }
 
 // ---------------- Configurações (seção 7) ----------------

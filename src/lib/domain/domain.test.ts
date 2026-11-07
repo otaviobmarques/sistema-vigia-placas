@@ -153,3 +153,29 @@ describe("Infosimples simulado", () => {
     }
   });
 });
+
+import { simularIndicacao, situacaoCondutor, exigeToxicologico } from "./condutores";
+describe("condutores (M13)", () => {
+  const base = { pontosInformados: 0, gravissimasInformadas: 0, pontosIndicados: 0, gravissimasIndicadas: 0, cnhValidade: "2027-06-01", toxicologicoValidade: null };
+  it("soma pontos informados e indicados e aplica o limite do art. 261", () => {
+    const s = situacaoCondutor({ ...base, pontosInformados: 10, pontosIndicados: 14, gravissimasIndicadas: 2 }, "2026-11-07");
+    expect(s).toMatchObject({ pontos: 24, gravissimas: 2, limite: 20, nivel: "suspensao" });
+  });
+  it("sem gravíssimas o limite é 40", () => {
+    expect(situacaoCondutor({ ...base, pontosIndicados: 21 }, "2026-11-07")).toMatchObject({ limite: 40, nivel: "atencao" });
+  });
+  it("avisa antes de indicar se a multa leva ao limite", () => {
+    const s = situacaoCondutor({ ...base, pontosInformados: 25, gravissimasInformadas: 1 }, "2026-11-07");
+    expect(simularIndicacao(s, 7, true)).toMatchObject({ pontos: 32, limite: 20, atingeLimite: true });
+    expect(simularIndicacao(situacaoCondutor(base, "2026-11-07"), 4, false).atingeLimite).toBe(false);
+  });
+  it("CNH vencida derruba a nota", () => {
+    const ok = situacaoCondutor(base, "2026-11-07").nota;
+    const vencida = situacaoCondutor({ ...base, cnhValidade: "2026-10-01" }, "2026-11-07").nota;
+    expect(ok).toBe(100);
+    expect(vencida).toBe(80);
+  });
+  it("toxicológico só para categorias C, D e E", () => {
+    expect([exigeToxicologico("B"), exigeToxicologico("D"), exigeToxicologico("AE")]).toEqual([false, true, true]);
+  });
+});
