@@ -5,6 +5,7 @@ import { brl } from "@/lib/domain/money";
 import { rotuloPerfil } from "@/lib/acesso";
 import { Cabecalho, Card, Numero, Vazio } from "@/components/ui";
 import { GraficoBarras } from "@/components/grafico-barras";
+import { Notificacoes } from "@/components/notificacoes";
 import { rankingCondutores } from "@/lib/services/relatorios-gestao";
 
 export const metadata = { title: "Dashboard" };
@@ -87,6 +88,7 @@ export default async function Painel({ searchParams }: { searchParams: Promise<{
       <Cabecalho sobre={`${rotuloPerfil(s.nivel, s.perfil)} · ${nomeMes(mes)}`} titulo="Dashboard da operação"
         acoes={Number(t.solicitacoes) ? <Link href="/solicitacoes" className="btn-ambar">{t.solicitacoes} solicitação(ões) de placa</Link> : undefined} />
 
+      <div className="mb-4"><Notificacoes compacto /></div>
       <p className="sobretitulo mb-2">Carteira</p>
       <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Numero rotulo="Placas gerenciadas" valor={placas} detalhe={`${t.clientes} clientes · ${t.placas_pausadas} pausada(s)`} />

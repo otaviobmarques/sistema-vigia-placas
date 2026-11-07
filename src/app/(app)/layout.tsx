@@ -7,7 +7,7 @@ import { sair, sairCliente } from "../actions";
 import { NavLink } from "@/components/nav-link";
 import { rotuloPerfil } from "@/lib/acesso";
 
-type Item = { href: string; rotulo: string; n?: number };
+type Item = { href: string; rotulo: string; n?: number; novas?: boolean };
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const s = await exigirSessao();
@@ -21,9 +21,16 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     ? Number((await noEscopo(s, (db) => db.one("select count(*) as n from solicitacoes_placa where status = 'pendente'")))?.n ?? 0)
     : 0;
 
+  // Selo "Novas": multas que chegaram nas últimas 24 h (da carteira, para a equipe; do cliente, para ele).
+  const nNovasEquipe = s.nivel !== "cliente"
+    ? Number((await noEscopo(s, (db) => db.one("select count(*) as n from multas m join clientes c on c.id = m.cliente_id where m.criado_em > now() - interval '24 hours' and m.estado not in ('paga','cancelada') and c.excluido_em is null")))?.n ?? 0)
+    : 0;
+  const nNovasCliente = s.clienteId
+    ? Number((await noEscopo(s, (db) => db.one("select count(*) as n from multas where cliente_id = $1 and criado_em > now() - interval '24 hours' and estado not in ('paga','cancelada')", [s.clienteId])))?.n ?? 0)
+    : 0;
   const itensCliente: Item[] = [
     { href: "/hoje", rotulo: "Faça hoje" },
-    { href: "/multas", rotulo: "Multas" },
+    { href: "/multas", rotulo: "Multas", n: nNovasCliente || undefined, novas: true },
     { href: "/placas", rotulo: "Placas" },
     { href: "/pagamentos", rotulo: "Pagamentos", n: nCarrinho || undefined },
     { href: "/extrato", rotulo: "Extrato de Economia" },
@@ -44,7 +51,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     { href: "/painel", rotulo: "Dashboard" },
     ...(s.perfil === "admin" ? [{ href: "/backoffice", rotulo: "Backoffice" }] : []),
     { href: "/carteira", rotulo: "Clientes" },
-    { href: "/gestao/multas", rotulo: "Multas em aberto" },
+    { href: "/gestao/multas", rotulo: "Multas em aberto", n: nNovasEquipe || undefined, novas: true },
     { href: "/placas/nova", rotulo: "Cadastrar placa" },
     { href: "/placas/importar", rotulo: "Importar placas" },
     { href: "/solicitacoes", rotulo: "Solicitações de placas", n: nSolicitacoes || undefined },
@@ -74,7 +81,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               )}
               <ul className="space-y-0.5">
                 {sec.itens.map((it) => (
-                  <li key={it.href}><NavLink href={it.href} n={it.n}>{it.rotulo}</NavLink></li>
+                  <li key={it.href}><NavLink href={it.href} n={it.n} novas={it.novas}>{it.rotulo}</NavLink></li>
                 ))}
               </ul>
             </div>

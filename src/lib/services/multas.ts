@@ -7,6 +7,7 @@ export interface MultaRow {
   id: string;
   placa_id: string;
   cliente_id: string;
+  criado_em?: string;
   orgao_id: string;
   auto_infracao: string;
   codigo_infracao: string;

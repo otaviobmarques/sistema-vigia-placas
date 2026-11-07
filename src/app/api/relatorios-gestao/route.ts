@@ -10,7 +10,7 @@ export async function GET(req: Request) {
   const q = new URL(req.url).searchParams;
   const tipo = q.get("tipo") ?? "";
   if (!ehRelatorio(tipo)) return NextResponse.json({ erro: "relatório inválido" }, { status: 400 });
-  const t = await noEscopo(s, (db) => gerarRelatorioGestao(db, tipo, { cliente: q.get("cliente"), placa: q.get("placa"), condutor: q.get("condutor"), mes: q.get("mes") }));
+  const t = await noEscopo(s, (db) => gerarRelatorioGestao(db, tipo, { cliente: q.get("cliente"), placa: q.get("placa"), condutor: q.get("condutor"), mes: q.get("mes"), novas: q.get("novas") === "1" }));
   const arquivo = `vigia_${tipo}_${hojeISO()}.xlsx`;
   return new Response(new Uint8Array(tabelaXlsx(t)), {
     headers: {
