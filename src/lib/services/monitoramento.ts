@@ -1,0 +1,150 @@
+import type { Db } from "../db";
+import { consultarMultas } from "../integrations/infosimples";
+import { enfileirar } from "../integrations/mensagens";
+import { avisoDevido, proximaConsulta, type Frequencia } from "../domain/monitoramento";
+import { hojeISO, dataBR } from "../domain/dates";
+import { melhorValorHoje, prazoIndicacao, valoresMulta } from "../domain/ctb";
+import { brl } from "../domain/money";
+import { regra, registrarEvento, SELECT_MULTA, type MultaRow } from "./multas";
+
+const LIMITE_FALHAS = 5;
+
+export async function consultarPlaca(db: Db, placaId: string, opts: { avulsa?: boolean } = {}) {
+  const p = await db.one(
+    `select p.*, c.frequencia_padrao, c.nome as cliente_nome, c.whatsapp, c.email, c.alertas_canais, c.pagamento_auto, c.pagamento_auto_ate, c.tipo
+     from placas p join clientes c on c.id = p.cliente_id where p.id = $1`,
+    [placaId],
+  );
+  if (!p) throw new Error("Placa não encontrada");
+  const fonte = await db.one("select * from fontes where ativa order by prioridade limit 1");
+  if (!fonte) throw new Error("Nenhuma fonte de dados ativa");
+
+  const r = await consultarMultas(p.placa, p.renavam, p.uf);
+  await db.q(
+    "insert into consultas (placa_id, cliente_id, fonte_id, custo, resultado, multas_encontradas, erro, avulsa) values ($1,$2,$3,$4,$5,$6,$7,$8)",
+    [p.id, p.cliente_id, fonte.id, r.custo || fonte.custo, r.ok ? "ok" : "erro", r.multas.length, r.erro ?? null, !!opts.avulsa],
+  );
+  if (!r.ok) {
+    // Desligamento automático de fonte com erro em sequência.
+    await db.q(
+      `update fontes set falhas_seguidas = falhas_seguidas + 1, ultima_falha = $2,
+         ativa = (falhas_seguidas + 1) < $3, desligada_em = case when (falhas_seguidas + 1) >= $3 then now() else desligada_em end
+       where id = $1`,
+      [fonte.id, r.erro, LIMITE_FALHAS],
+    );
+    if (p.status === "aguardando") await db.q("update placas set status = 'erro' where id = $1", [p.id]);
+    return { ok: false, novas: 0, total: 0, erro: r.erro };
+  }
+  await db.q("update fontes set falhas_seguidas = 0 where id = $1", [fonte.id]);
+
+  let novas = 0;
+  for (const m of r.multas) {
+    await db.q("insert into orgaos (id, nome, uf) values ($1,$2,$3) on conflict (id) do nothing", [m.orgaoId, m.orgaoNome, p.uf]);
+    const ins = await db.one<{ id: string; nova: boolean }>(
+      `insert into multas (placa_id, cliente_id, orgao_id, auto_infracao, codigo_infracao, descricao, gravidade, pontos, valor,
+         data_infracao, hora, local, estado, fonte, notificada_em, vencimento, linha_digitavel)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+       on conflict (orgao_id, auto_infracao, codigo_infracao) do update set
+         notificada_em = coalesce(multas.notificada_em, excluded.notificada_em),
+         vencimento = coalesce(excluded.vencimento, multas.vencimento),
+         linha_digitavel = coalesce(excluded.linha_digitavel, multas.linha_digitavel),
+         estado = case when multas.estado = 'detectada' and excluded.notificada_em is not null then 'notificada' else multas.estado end
+       returning id, (xmax = 0) as nova`,
+      [p.id, p.cliente_id, m.orgaoId, m.autoInfracao, m.codigoInfracao, m.descricao, m.gravidade, m.pontos, m.valor,
+       m.dataInfracao, m.hora, m.local, m.notificadaEm ? "notificada" : "detectada", fonte.nome, m.notificadaEm, m.vencimento, m.linhaDigitavel],
+    );
+    if (ins?.nova) {
+      novas++;
+      await registrarEvento(db, { multaId: ins.id, clienteId: p.cliente_id, tipo: "detectada", descricao: `Detectada pelo Vigia Placa`, fonte: `${fonte.nome}${r.simulado ? " (simulado)" : ""}` });
+      for (const canal of p.alertas_canais as string[]) {
+        await enfileirar(db, {
+          clienteId: p.cliente_id,
+          canal: canal as any,
+          destino: canal === "email" ? p.email : canal === "whatsapp" ? p.whatsapp : p.cliente_id,
+          assunto: `Opa, multa nova na placa ${p.placa}!`,
+          corpo: `${m.descricao} · ${m.orgaoNome} · ${dataBR(m.dataInfracao)}. Valor cheio ${brl(m.valor)}. Abra o Vigia Placa para ver como pagar menos.`,
+        });
+      }
+      // Pagamento automático (Configurações › Pagamento): multas com desconto até o valor definido vão para o carrinho.
+      if (p.pagamento_auto && p.pagamento_auto_ate && m.vencimento && m.notificadaEm) {
+        const nova = await db.one<MultaRow>(`${SELECT_MULTA} where m.id = $1`, [ins.id]);
+        const melhor = melhorValorHoje(regra(nova!), hojeISO());
+        if (melhor.desconto && melhor.valor <= p.pagamento_auto_ate) {
+          await db.q("insert into carrinho_itens (cliente_id, multa_id) values ($1,$2) on conflict do nothing", [p.cliente_id, ins.id]);
+        }
+      }
+    }
+  }
+
+  const sit = await db.one<{ ultima: string | null; prazo: string | null }>(
+    `select max(data_infracao) as ultima, min(least(vencimento, notificada_em + 30)) as prazo
+     from multas where placa_id = $1 and estado not in ('paga','cancelada')`,
+    [p.id],
+  );
+  const hoje = hojeISO();
+  const prox = proximaConsulta((p.frequencia ?? p.frequencia_padrao) as Frequencia, hoje, { ultimaMultaEm: sit?.ultima ?? null, proximoPrazo: sit?.prazo ?? null }, hoje);
+  await db.q(
+    "update placas set ultima_verificacao = now(), proxima_verificacao = $2, status = case when status in ('aguardando','erro') then 'ativa' else status end where id = $1",
+    [p.id, prox],
+  );
+  return { ok: true, novas, total: r.multas.length };
+}
+
+/** Varredura agendada: consulta as placas vencidas, marca multas vencidas e dispara avisos de prazo. */
+export async function varredura(db: Db, limite = 200) {
+  const hoje = hojeISO();
+  const devidas = await db.q<{ id: string }>(
+    `select id from placas where status in ('ativa','aguardando') and (proxima_verificacao is null or proxima_verificacao <= $1)
+     order by proxima_verificacao nulls first limit $2`,
+    [hoje, limite],
+  );
+  let novas = 0, erros = 0;
+  for (const p of devidas) {
+    const r = await consultarPlaca(db, p.id);
+    novas += r.novas;
+    if (!r.ok) erros++;
+  }
+  await db.q(
+    `update multas set estado = 'vencida' where vencimento < $1
+       and estado in ('notificada','condutor_indicado','reconhecida_sne','penalidade')`,
+    [hoje],
+  );
+  const avisos = await dispararAvisos(db);
+  return { placas: devidas.length, novas, erros, avisos };
+}
+
+export async function dispararAvisos(db: Db) {
+  const hoje = hojeISO();
+  const multas = await db.q<MultaRow & { alertas_antecedencias: number[]; alertas_canais: string[]; email: string; whatsapp: string; franqueado_email: string | null }>(
+    `${SELECT_MULTA.replace("from multas m", ", c.alertas_antecedencias, c.alertas_canais, c.email, c.whatsapp, (select u.email from usuarios u where u.franqueado_id = c.franqueado_id limit 1) as franqueado_email from multas m")}
+     where m.estado not in ('paga','cancelada','vencida')`,
+  );
+  let n = 0;
+  for (const m of multas) {
+    const enviados = await db.q<{ prazo: string; antecedencia: number }>("select prazo, antecedencia from alertas_enviados where multa_id = $1", [m.id]);
+    const v = valoresMulta(regra(m));
+    const prazos: Array<{ tipo: string; data: string | null; texto: string }> = [
+      { tipo: "vencimento", data: m.vencimento, texto: `vence em {d} dia(s). Pague com desconto` },
+    ];
+    if (m.tipo_proprietario === "PJ" && !m.condutor_id) {
+      prazos.push({ tipo: "indicacao", data: prazoIndicacao(m.notificada_em), texto: `prazo de indicação do condutor termina em {d} dia(s). Sem indicação vem multa NIC de ${brl(v.nic)}` });
+    }
+    for (const pr of prazos) {
+      if (!pr.data) continue;
+      const ja = enviados.filter((e) => e.prazo === pr.tipo).map((e) => e.antecedencia);
+      const ant = avisoDevido(pr.data, hoje, m.alertas_antecedencias, ja);
+      if (ant === null) continue;
+      await db.q("insert into alertas_enviados (multa_id, prazo, antecedencia, cliente_id) values ($1,$2,$3,$4) on conflict do nothing", [m.id, pr.tipo, ant, m.cliente_id]);
+      const corpo = `Placa ${m.placa}: ${pr.texto.replace("{d}", String(ant))}.`;
+      for (const canal of m.alertas_canais) {
+        await enfileirar(db, { clienteId: m.cliente_id, canal: canal as any, destino: canal === "email" ? m.email : m.whatsapp, assunto: `Prazo em ${ant} dia(s) · ${m.placa}`, corpo });
+      }
+      // Escalonamento: no último aviso, o franqueado também é avisado.
+      if (ant <= 1 && m.franqueado_email) {
+        await enfileirar(db, { clienteId: m.cliente_id, canal: "email", destino: m.franqueado_email, assunto: `[Escalonamento] ${m.cliente_nome} · ${m.placa}`, corpo });
+      }
+      n++;
+    }
+  }
+  return n;
+}
