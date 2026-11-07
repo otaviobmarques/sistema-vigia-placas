@@ -2,6 +2,7 @@ import { exigirSessao, noEscopo } from "@/lib/auth";
 import { hojeISO } from "@/lib/domain/dates";
 import { brl } from "@/lib/domain/money";
 import { FONTES, modoSimulado, UFS_EXIGEM_LOGIN } from "@/lib/integrations/infosimples";
+import { directDataAtiva, SERVICO_DIRECTDATA } from "@/lib/integrations/directdata";
 import { TestarFonte } from "@/components/testar-fonte";
 import { asaasSimulado } from "@/lib/integrations/asaas";
 import { Abas, Aviso, Cabecalho, Card, Mensagem, Numero } from "@/components/ui";
@@ -143,11 +144,18 @@ export default async function Backoffice({ searchParams }: { searchParams: Promi
         <Card titulo="Cobertura da Infosimples por UF" className="mt-6">
           <div className="grid gap-2 text-sm sm:grid-cols-2">
             <div><b>Sem login do proprietário (padrão):</b> PRF em todas as UFs{" + "}{FONTES.filter((f) => f.uf !== "*").map((f) => `${f.uf}${f.aConfirmar ? " (a confirmar)" : ""}`).join(", ")}.</div>
-            <div><b>Exigem login gov.br ou certificado:</b> {UFS_EXIGEM_LOGIN.join(", ")}. Nessas UFs, a captura de notificações e a base nacional (Senatran) completam a cobertura.</div>
+            <div><b>Exigem login gov.br ou certificado:</b> {UFS_EXIGEM_LOGIN.join(", ")}. Nessas UFs, a captura de notificações e a base nacional completam a cobertura.</div>
+            <div className="sm:col-span-2"><b>Direct Data · Radar Serpro:</b> {directDataAtiva() ? "ligada — consulta nacional por placa e Renavam (órgãos aderentes ao Radar/SNE), em paralelo com a Infosimples; R$ 0,36 por consulta com sucesso." : "desligada (configure DIRECTDATA_TOKEN)."}</div>
           </div>
         </Card>
         <Card titulo="Testar fonte com uma placa real" className="mt-6">
-          <TestarFonte fontes={FONTES.map((f) => ({ servico: f.servico, nome: f.nome, uf: f.uf, aConfirmar: f.aConfirmar }))} ativo={!modoSimulado()} />
+          <TestarFonte
+            fontes={[
+              ...(directDataAtiva() ? [{ servico: SERVICO_DIRECTDATA, nome: "Direct Data · Radar Serpro (nacional)", uf: "*" }] : []),
+              ...FONTES.map((f) => ({ servico: f.servico, nome: `Infosimples · ${f.nome}`, uf: f.uf, aConfirmar: f.aConfirmar })),
+            ]}
+            ativo={!modoSimulado() || directDataAtiva()}
+          />
         </Card>
         </>
       )}

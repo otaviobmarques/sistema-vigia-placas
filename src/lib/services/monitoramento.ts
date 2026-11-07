@@ -1,5 +1,12 @@
 import type { Db } from "../db";
 import { consultarMultas, erroDeConta, FONTES } from "../integrations/infosimples";
+import { consultarDirectData, directDataAtiva, SERVICO_DIRECTDATA } from "../integrations/directdata";
+
+function nomeFonte(servico: string) {
+  if (servico === "simulado") return "Infosimples";
+  if (servico === SERVICO_DIRECTDATA) return "Direct Data · Radar Serpro";
+  return `Infosimples · ${FONTES.find((f) => f.servico === servico)?.nome ?? servico}`;
+}
 import { enfileirar } from "../integrations/mensagens";
 import { despacharOutbox } from "./despacho";
 import { avisoDevido, proximaConsulta, type Frequencia } from "../domain/monitoramento";
@@ -17,20 +24,34 @@ export async function consultarPlaca(db: Db, placaId: string, opts: { avulsa?: b
     [placaId],
   );
   if (!p) throw new Error("Placa não encontrada");
-  const fonte = await db.one("select * from fontes where id = 'infosimples' and ativa");
-  if (!fonte) throw new Error("Fonte Infosimples desligada no backoffice");
+  // Fontes: Infosimples (por serviço) e Direct Data (Radar Serpro, nacional). Uma desligada não impede a outra.
+  const infosimplesLigada = !!(await db.one("select 1 from fontes where id = 'infosimples' and ativa"));
+  const ddRow = await db.one<{ ativa: boolean }>("select ativa from fontes where id = 'directdata'");
+  const directLigada = directDataAtiva() && (ddRow?.ativa ?? true);
+  if (!infosimplesLigada && !directLigada) throw new Error("Nenhuma fonte de dados ativa no backoffice");
 
   // Cada serviço da Infosimples é uma fonte própria: erro em sequência desliga só aquele serviço.
   const desligadas = new Set(
     (await db.q<{ id: string }>("select id from fontes where id like 'infosimples:%' and not ativa")).map((f) => f.id.slice("infosimples:".length)),
   );
-  const r = await consultarMultas(p.placa, p.renavam, p.uf, { documento: p.documento, desligadas });
-  for (const d of r.detalhes) {
-    const fid = d.servico === "simulado" ? "infosimples" : `infosimples:${d.servico}`;
+  const [ri, dd] = await Promise.all([
+    infosimplesLigada ? consultarMultas(p.placa, p.renavam, p.uf, { documento: p.documento, desligadas }) : null,
+    directLigada ? consultarDirectData(p.placa, p.renavam) : null,
+  ]);
+  const detalhes = [...(ri?.detalhes ?? []), ...(dd ? [dd] : [])];
+  const r = {
+    ok: detalhes.some((d) => d.ok),
+    simulado: !!ri?.simulado,
+    erro: detalhes.filter((d) => !d.ok).map((d) => `${d.servico}: ${d.erro}`).join(" | ") || "Nenhuma fonte respondeu",
+    // Cada multa guarda de qual fonte veio (a primeira que a trouxe).
+    multas: detalhes.flatMap((d) => d.multas.map((m) => ({ ...m, fonteNome: nomeFonte(d.servico) }))),
+  };
+  for (const d of detalhes) {
+    const fid = d.servico === "simulado" ? "infosimples" : d.servico === SERVICO_DIRECTDATA ? "directdata" : `infosimples:${d.servico}`;
     const info = FONTES.find((x) => x.servico === d.servico);
     if (fid !== "infosimples") {
       await db.q("insert into fontes (id, nome, ativa, prioridade, custo) values ($1,$2,true,1,$3) on conflict (id) do nothing", [
-        fid, `Infosimples · ${info?.nome ?? d.servico}`, Math.round(((info?.extra ?? 0) + 0.2) * 100),
+        fid, nomeFonte(d.servico), fid === "directdata" ? 36 : Math.round(((info?.extra ?? 0) + 0.2) * 100),
       ]);
     }
     await db.q(
@@ -38,7 +59,7 @@ export async function consultarPlaca(db: Db, placaId: string, opts: { avulsa?: b
       [p.id, p.cliente_id, fid, d.custo, d.ok ? "ok" : "erro", d.multas.length, d.erro ?? null, !!opts.avulsa],
     );
     if (d.ok) await db.q("update fontes set falhas_seguidas = 0 where id = $1", [fid]);
-    else if (erroDeConta(d)) await db.q("update fontes set ultima_falha = $2 where id = $1", [fid, `Conta Infosimples: ${d.erro}`]);
+    else if (erroDeConta(d) || /n[aã]o autorizad|token inv/i.test(d.erro ?? "")) await db.q("update fontes set ultima_falha = $2 where id = $1", [fid, `Problema na conta: ${d.erro}`]);
     else {
       await db.q(
         `update fontes set falhas_seguidas = falhas_seguidas + 1, ultima_falha = $2,
@@ -54,7 +75,24 @@ export async function consultarPlaca(db: Db, placaId: string, opts: { avulsa?: b
   }
 
   let novas = 0;
+  const vistas = new Set<string>();
   for (const m of r.multas) {
+    // A mesma multa pode vir de fontes diferentes com o órgão escrito de outro jeito: o auto na mesma placa identifica.
+    const chaveAuto = m.autoInfracao.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (vistas.has(chaveAuto)) continue;
+    vistas.add(chaveAuto);
+    const existente = await db.one<{ id: string }>(
+      "select id from multas where placa_id = $1 and upper(regexp_replace(auto_infracao, '[^A-Za-z0-9]', '', 'g')) = $2",
+      [p.id, chaveAuto],
+    );
+    if (existente) {
+      await db.q(
+        `update multas set notificada_em = coalesce(notificada_em, $2), vencimento = coalesce($3, vencimento), linha_digitavel = coalesce(linha_digitavel, $4),
+           estado = case when estado = 'detectada' and $2::date is not null then 'notificada' else estado end where id = $1`,
+        [existente.id, m.notificadaEm, m.vencimento, m.linhaDigitavel],
+      );
+      continue;
+    }
     await db.q("insert into orgaos (id, nome, uf) values ($1,$2,$3) on conflict (id) do nothing", [m.orgaoId, m.orgaoNome, p.uf]);
     const ins = await db.one<{ id: string; nova: boolean }>(
       `insert into multas (placa_id, cliente_id, orgao_id, auto_infracao, codigo_infracao, descricao, gravidade, pontos, valor,
@@ -67,11 +105,11 @@ export async function consultarPlaca(db: Db, placaId: string, opts: { avulsa?: b
          estado = case when multas.estado = 'detectada' and excluded.notificada_em is not null then 'notificada' else multas.estado end
        returning id, (xmax = 0) as nova`,
       [p.id, p.cliente_id, m.orgaoId, m.autoInfracao, m.codigoInfracao, m.descricao, m.gravidade, m.pontos, m.valor,
-       m.dataInfracao, m.hora, m.local, m.notificadaEm ? "notificada" : "detectada", fonte.nome, m.notificadaEm, m.vencimento, m.linhaDigitavel],
+       m.dataInfracao, m.hora, m.local, m.notificadaEm ? "notificada" : "detectada", m.fonteNome, m.notificadaEm, m.vencimento, m.linhaDigitavel],
     );
     if (ins?.nova) {
       novas++;
-      await registrarEvento(db, { multaId: ins.id, clienteId: p.cliente_id, tipo: "detectada", descricao: `Detectada pelo Vigia Placa`, fonte: `${fonte.nome}${r.simulado ? " (simulado)" : ""}` });
+      await registrarEvento(db, { multaId: ins.id, clienteId: p.cliente_id, tipo: "detectada", descricao: `Detectada pelo Vigia Placa`, fonte: `${m.fonteNome}${r.simulado ? " (simulado)" : ""}` });
       for (const canal of p.alertas_canais as string[]) {
         await enfileirar(db, {
           clienteId: p.cliente_id,
