@@ -63,6 +63,8 @@ export async function sessaoAtual(): Promise<Sessao | null> {
   }
   const u = await sistema((db) => db.one("select * from usuarios where id = $1", [sub]));
   if (!u || u.ativo === false) return null;
+  // Cliente bloqueado ou excluído perde o acesso na hora, mesmo com a sessão aberta.
+  if (u.cliente_id && (await sistema((db) => db.one("select 1 from clientes where id = $1 and (bloqueado_em is not null or excluido_em is not null)", [u.cliente_id])))) return null;
   const escopo: Escopo = { nivel: u.nivel, franqueadoId: u.franqueado_id, clienteId: u.cliente_id };
   let clienteId: string | null = u.cliente_id;
   let clienteNome: string | null = null;
