@@ -6,7 +6,7 @@ import { rotuloPerfil } from "@/lib/acesso";
 import { Cabecalho, Card, Numero, Vazio } from "@/components/ui";
 import { GraficoBarras } from "@/components/grafico-barras";
 
-export const metadata = { title: "Painel" };
+export const metadata = { title: "Dashboard" };
 
 /** Últimos n meses (YYYY-MM), do mais antigo ao atual. */
 function ultimosMeses(n: number): string[] {
@@ -82,7 +82,7 @@ export default async function Painel({ searchParams }: { searchParams: Promise<{
   const pct = (a: number, b: number) => (b ? `${Math.round((a / b) * 100)}%` : "—");
   return (
     <>
-      <Cabecalho sobre={`${rotuloPerfil(s.nivel, s.perfil)} · ${nomeMes(mes)}`} titulo="Painel da operação"
+      <Cabecalho sobre={`${rotuloPerfil(s.nivel, s.perfil)} · ${nomeMes(mes)}`} titulo="Dashboard da operação"
         acoes={Number(t.solicitacoes) ? <Link href="/solicitacoes" className="btn-ambar">{t.solicitacoes} solicitação(ões) de placa</Link> : undefined} />
 
       <p className="sobretitulo mb-2">Carteira</p>
