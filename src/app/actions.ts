@@ -107,7 +107,7 @@ export async function entrarCliente(f: FormData) {
 export async function sairCliente() {
   const sessao = await exigirSessao(["franqueado", "franqueadora"]);
   await escolherCliente(null);
-  redirect(sessao.nivel === "franqueadora" ? "/backoffice" : "/carteira");
+  redirect(ehAdminSistema(sessao) ? "/backoffice" : "/carteira");
 }
 
 export async function iniciar2fa() {
@@ -669,6 +669,31 @@ export async function alternarUsuario(f: FormData) {
 
 // ---------------- Onboarding (T02) ----------------
 
+/** Preço/saving negociados para um cliente (só a equipe Vigia Placa). Vazio = valor do plano. */
+function lerPrecoPersonalizado(f: FormData, volta: string, sessao: Sessao): { preco: number | null; saving: number | null } | null {
+  if (!ehEquipeVigia(sessao)) return null;
+  const p = s(f, "preco_personalizado");
+  const sv = s(f, "saving_personalizado").replace(",", ".").replace("%", "");
+  const preco = p ? parseReais(p) : null;
+  const saving = sv ? Math.round(Number(sv) * 100) : null;
+  if (preco !== null && !(preco >= 0)) ir(volta, { erro: "Preço por placa inválido." });
+  if (saving !== null && !(saving >= 0 && saving <= 10000)) ir(volta, { erro: "O saving deve ficar entre 0% e 100%." });
+  return { preco, saving };
+}
+
+export async function salvarPrecoCliente(f: FormData) {
+  const sessao = await exigirSessao(["franqueadora"]);
+  if (!["admin", "gestor"].includes(sessao.perfil)) ir("/carteira", { erro: "Seu perfil não altera preços." });
+  const preco = lerPrecoPersonalizado(f, "/carteira", sessao)!;
+  const clienteId = s(f, "clienteId");
+  await noEscopo(sessao, async (db) => {
+    await db.q("update clientes set preco_placa_personalizado = $2, saving_bps_personalizado = $3 where id = $1", [clienteId, preco.preco, preco.saving]);
+    await auditar(db, { usuarioId: sessao.usuarioId, clienteId, acao: "preco_personalizado", entidade: "cliente", entidadeId: clienteId, dados: preco });
+  });
+  revalidatePath("/", "layout");
+  ir("/carteira", { ok: preco.preco === null && preco.saving === null ? "Cliente voltou ao preço do plano." : "Preço personalizado salvo. Vale a partir da próxima fatura." });
+}
+
 export async function criarCliente(f: FormData) {
   const sessao = await exigirSessao(["franqueado", "franqueadora"]);
   const doc = somenteDocumento(s(f, "documento"));
@@ -677,6 +702,7 @@ export async function criarCliente(f: FormData) {
   if (f.get("aceite") !== "on") ir("/clientes/novo", { erro: "O aceite dos termos (com a autorização de consulta e LGPD) é obrigatório." });
   const ip = (await headers()).get("x-forwarded-for")?.split(",")[0] ?? "local";
   const avisos: string[] = [];
+  const preco = lerPrecoPersonalizado(f, "/clientes/novo", sessao);
   let id: string;
   try {
     id = await noEscopo(sessao, async (db) => {
@@ -692,6 +718,7 @@ export async function criarCliente(f: FormData) {
          ehAdminSistema(sessao) ? lerFrequencia(f, "frequencia") ?? "adaptativa" : normalizarFrequencia((await db.one("select frequencia from planos where id = $1", [s(f, "plano")]))?.frequencia),
          ip, cfg!.termo_versao, novoId],
       );
+      if (preco) await db.q("update clientes set preco_placa_personalizado = $2, saving_bps_personalizado = $3 where id = $1", [novoId, preco.preco, preco.saving]);
       await auditar(db, { usuarioId: sessao.usuarioId, clienteId: novoId, acao: "cliente_criado", entidade: "cliente", entidadeId: novoId, dados: { aceite_ip: ip } });
       return novoId;
     });

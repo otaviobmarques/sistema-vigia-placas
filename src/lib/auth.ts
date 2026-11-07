@@ -100,7 +100,7 @@ export async function exigirAdminSistema(volta = "/backoffice"): Promise<Sessao>
 /** Exige um cliente em foco (para telas do cliente). Franqueado sem cliente escolhido vai para a carteira. */
 export async function exigirCliente(): Promise<Sessao & { clienteId: string }> {
   const s = await exigirSessao();
-  if (!s.clienteId) redirect(s.nivel === "franqueadora" ? "/backoffice" : "/carteira");
+  if (!s.clienteId) redirect(s.nivel === "franqueadora" && s.perfil === "admin" ? "/backoffice" : "/carteira");
   return s as Sessao & { clienteId: string };
 }
 

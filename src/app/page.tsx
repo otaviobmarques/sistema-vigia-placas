@@ -14,5 +14,5 @@ export default async function Inicio() {
   const s = await sessaoAtual();
   if (!s) return <SiteVendas planos={await carregarPlanosSite()} />;
   if (s.nivel === "cliente" || s.clienteId) redirect("/hoje");
-  redirect(s.nivel === "franqueado" ? "/carteira" : "/backoffice");
+  redirect(s.nivel === "franqueadora" && s.perfil === "admin" ? "/backoffice" : "/carteira");
 }

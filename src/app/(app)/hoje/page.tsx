@@ -36,7 +36,7 @@ export default async function Hoje({ searchParams }: { searchParams: Promise<{ t
       count(*) filter (where status <> 'pausada' and sne_adesao_em is not null) as sne from placas ${filtro}`, p);
     const eco = await db.q<{ mes: string; tipo: string; v: number }>(`select mes, tipo, sum(valor) as v from economias ${filtro ? filtro + " and" : "where"} comprovada group by mes, tipo`, p);
     const desde = await db.one(`select min(mes) as m from economias ${filtro}`, p);
-    const mensal = cid ? await db.one("select pl.preco_placa from clientes c join planos pl on pl.id = c.plano_id where c.id = $1", [cid]) : null;
+    const mensal = cid ? await db.one("select coalesce(c.preco_placa_personalizado, pl.preco_placa) as preco_placa from clientes c join planos pl on pl.id = c.plano_id where c.id = $1", [cid]) : null;
     const perdido = await db.one(
       `select coalesce(sum(m.valor * 0.2),0)::int as v from multas m join placas pl on pl.id = m.placa_id
        where (pl.sne_adesao_em is null or pl.sne_adesao_em > m.data_infracao) and m.estado = 'paga' ${cid ? "and m.cliente_id = $1" : ""}`, p);
