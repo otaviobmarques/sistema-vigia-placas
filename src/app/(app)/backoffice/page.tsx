@@ -6,10 +6,13 @@ import { directDataAtiva, SERVICO_DIRECTDATA } from "@/lib/integrations/directda
 import { TestarFonte } from "@/components/testar-fonte";
 import { asaasSimulado } from "@/lib/integrations/asaas";
 import { Abas, Aviso, Cabecalho, Card, Mensagem, Numero } from "@/components/ui";
-import { atualizarDefesaAction, reativarFonte, rodarVarredura, salvarConfigGlobal, salvarFranqueado, transferirCliente } from "../../actions";
+import { atualizarDefesaAction, reativarFonte, rodarVarredura, salvarConfigGlobal, salvarFranqueado, salvarRegraCliente, salvarRegraFontes, transferirCliente } from "../../actions";
+import { ESTRATEGIAS, rotuloFrequencia, type EstrategiaFontes, type FonteDados } from "@/lib/domain/monitoramento";
+import { custoConsultaPlaca, custoMensalPlaca, fontesDisponiveis, UFS_EXEMPLO } from "@/lib/services/custos";
+import { CampoFrequencia } from "@/components/frequencia";
 
 export const metadata = { title: "Backoffice" };
-const ABAS = [["geral", "Visão geral"], ["franqueados", "Franqueados"], ["planos", "Planos e percentuais"], ["fontes", "Fontes de dados"], ["cobertura", "Cobertura"], ["defesas", "Defesas"], ["mensagens", "Mensagens"], ["auditoria", "Auditoria"]] as const;
+const ABAS = [["geral", "Visão geral"], ["franqueados", "Franqueados"], ["planos", "Planos e percentuais"], ["regras", "Regras de consulta"], ["fontes", "Fontes de dados"], ["cobertura", "Cobertura"], ["defesas", "Defesas"], ["mensagens", "Mensagens"], ["auditoria", "Auditoria"]] as const;
 const pct = (bps: number) => (bps / 100).toLocaleString("pt-BR");
 
 export default async function Backoffice({ searchParams }: { searchParams: Promise<{ aba?: string; ok?: string; erro?: string }> }) {
@@ -39,6 +42,11 @@ export default async function Backoffice({ searchParams }: { searchParams: Promi
     defesas: await db.q("select pd.*, m.descricao, m.auto_infracao, p.placa, c.nome from pedidos_defesa pd join multas m on m.id = pd.multa_id join placas p on p.id = m.placa_id join clientes c on c.id = pd.cliente_id order by pd.criado_em desc"),
     outbox: await db.q("select * from outbox order by criado_em desc limit 50"),
     auditoria: await db.q("select a.*, u.email from auditoria a left join usuarios u on u.id = a.usuario_id order by a.data desc limit 100"),
+    regraClientes: await db.q(`select c.id, c.nome, c.frequencia_padrao, c.teto_dados_mensal, pl.nome as plano,
+        (select count(*) from placas p where p.cliente_id = c.id and p.status <> 'pausada') as placas,
+        (select coalesce(sum(custo),0) from consultas q where q.cliente_id = c.id and q.data >= date_trunc('month', now())) as gasto_mes,
+        coalesce((select json_agg(json_build_object('uf', p.uf, 'freq', coalesce(p.frequencia, c.frequencia_padrao))) from placas p where p.cliente_id = c.id and p.status <> 'pausada'), '[]') as placas_lista
+      from clientes c join planos pl on pl.id = c.plano_id where c.ativo order by c.nome`),
   }));
   const t = d.totais!;
   const saving = Math.round((Number(t.economia_mes) * d.cfg!.saving_bps) / 10000);
@@ -121,6 +129,77 @@ export default async function Backoffice({ searchParams }: { searchParams: Promi
           <p className="mt-4 text-xs text-suave">Os preços vêm preenchidos com valores de partida (custo de dados até 25% do preço, seção 12.1). Ajuste após as cotações da Infosimples, do Asaas e da Celcoin.</p>
         </Card>
       )}
+
+      {aba === "regras" && (() => {
+        const estrategia = (d.cfg!.estrategia_fontes ?? "principal_reserva") as EstrategiaFontes;
+        const principal = (d.cfg!.fonte_principal ?? "directdata") as FonteDados;
+        const disp = fontesDisponiveis();
+        const nomeF = (f: FonteDados) => (f === "directdata" ? "Direct Data" : "Infosimples");
+        return (
+          <div className="space-y-6">
+            <Card titulo="Estratégia de fontes">
+              <form action={salvarRegraFontes} className="space-y-4">
+                <div className="grid gap-2 md:grid-cols-2">
+                  {(Object.entries(ESTRATEGIAS) as [EstrategiaFontes, { rotulo: string; descricao: string }][]).map(([k, e]) => (
+                    <label key={k} className="flex cursor-pointer gap-3 rounded-xl border border-borda p-3 text-sm has-[:checked]:border-vigia has-[:checked]:ring-2 has-[:checked]:ring-vigia/10">
+                      <input type="radio" name="estrategia" value={k} defaultChecked={k === estrategia} className="mt-1 accent-vigia" />
+                      <span><b>{e.rotulo}</b><br /><span className="text-suave">{e.descricao}</span></span>
+                    </label>
+                  ))}
+                </div>
+                <div className="max-w-xs"><label className="rotulo">Fonte principal (para "Principal com reserva" e "Alternar")</label>
+                  <select name="principal" defaultValue={principal} className="campo"><option value="directdata">Direct Data · Radar Serpro (R$ 0,36, só cobra sucesso)</option><option value="infosimples">Infosimples · PRF + Detran (cobra até erro)</option></select>
+                </div>
+                <button className="btn-primario btn-sm">Salvar regra</button>
+              </form>
+              <div className="mt-5 overflow-x-auto">
+                <table className="tabela min-w-[560px]">
+                  <thead><tr><th>Custo por consulta de uma placa de…</th>{(Object.keys(ESTRATEGIAS) as EstrategiaFontes[]).map((k) => <th key={k} className="text-right">{ESTRATEGIAS[k].rotulo}</th>)}</tr></thead>
+                  <tbody>
+                    {UFS_EXEMPLO.map((uf) => (
+                      <tr key={uf}><td>{uf}</td>{(Object.keys(ESTRATEGIAS) as EstrategiaFontes[]).map((k) => {
+                        const c = custoConsultaPlaca(uf, k, principal, ["directdata", "infosimples"]);
+                        return <td key={k} className={`num text-right ${k === estrategia ? "font-bold" : ""}`}>{brl(c.custo)}<div className="text-[10px] font-normal text-suave">{c.escolha.primeiras.map(nomeF).join(" + ") || "—"}</div></td>;
+                      })}</tr>
+                    ))}
+                  </tbody>
+                </table>
+                <p className="mt-2 text-xs text-suave">Simulação com as duas fontes ligadas. A fonte de reserva só é chamada quando a principal falha, então não entra no custo previsto. Direct Data cobra só consultas com sucesso; Infosimples cobra todas. Fontes disponíveis agora: {disp.map(nomeF).join(", ") || "nenhuma (modo simulado)"}.</p>
+              </div>
+            </Card>
+            <Card titulo="Frequência e teto por cliente">
+              <div className="-mx-5 overflow-x-auto">
+                <table className="tabela min-w-[900px]">
+                  <thead><tr><th>Cliente</th><th className="text-right">Placas</th><th className="text-right">Gasto no mês</th><th className="text-right">Previsto/mês</th><th>Frequência padrão · teto mensal de dados</th></tr></thead>
+                  <tbody>
+                    {d.regraClientes.map((c) => {
+                      const previsto = (c.placas_lista as Array<{ uf: string; freq: string }>).reduce((a, p) => a + custoMensalPlaca(p.uf, p.freq, estrategia, principal), 0);
+                      const estourou = c.teto_dados_mensal && Number(c.gasto_mes) >= c.teto_dados_mensal;
+                      return (
+                        <tr key={c.id}>
+                          <td><div className="font-semibold">{c.nome}</div><div className="text-xs text-suave">plano {c.plano} · {rotuloFrequencia(c.frequencia_padrao)}</div></td>
+                          <td className="text-right">{c.placas}</td>
+                          <td className={`num text-right ${estourou ? "font-bold text-rec" : ""}`}>{brl(Number(c.gasto_mes))}{estourou ? <div className="text-[10px]">teto atingido</div> : null}</td>
+                          <td className="num text-right">{brl(previsto)}</td>
+                          <td>
+                            <form action={salvarRegraCliente} className="flex flex-wrap items-center gap-2">
+                              <input type="hidden" name="clienteId" value={c.id} />
+                              <CampoFrequencia nome="frequencia" valor={c.frequencia_padrao} compacto />
+                              <input name="teto" defaultValue={c.teto_dados_mensal ? (c.teto_dados_mensal / 100).toFixed(2).replace(".", ",") : ""} placeholder="teto R$ (opcional)" className="campo w-36 py-1.5 text-xs" />
+                              <button className="btn-leve btn-sm">Salvar</button>
+                            </form>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <p className="mt-3 text-xs text-suave">Frequência por grupo de placas: entre no cliente (Clientes › Abrir) e use Configurações › Monitoramento; por placa, na tela Placas. Com o teto atingido, só placas em período de risco (multa recente ou prazo próximo) seguem sendo consultadas até virar o mês; as demais são adiadas em 7 dias.</p>
+            </Card>
+          </div>
+        );
+      })()}
 
       {aba === "fontes" && (
         <>

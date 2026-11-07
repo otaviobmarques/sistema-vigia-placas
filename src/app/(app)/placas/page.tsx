@@ -1,10 +1,11 @@
 import Link from "next/link";
 import { exigirCliente, noEscopo } from "@/lib/auth";
 import { dataBR } from "@/lib/domain/dates";
-import { FREQUENCIAS, type Frequencia } from "@/lib/domain/monitoramento";
+import { rotuloFrequencia } from "@/lib/domain/monitoramento";
+import { CampoFrequencia } from "@/components/frequencia";
 import { Cabecalho, Card, Mensagem, Vazio } from "@/components/ui";
 import { Placa } from "@/components/marca";
-import { adicionarPlaca, alterarStatusPlaca, consultarAgora, salvarSne } from "../../actions";
+import { adicionarPlaca, alterarStatusPlaca, consultarAgora, salvarFrequenciaPlaca, salvarSne } from "../../actions";
 import { LeitorDocumento } from "@/components/leitor-documento";
 import { leitorAtivo } from "@/lib/integrations/leitor";
 
@@ -28,7 +29,7 @@ export default async function Placas({ searchParams }: { searchParams: Promise<{
     <>
       <Cabecalho
         titulo="Placas"
-        sub={`${placas.filter((p) => p.status !== "pausada").length} placas vigiadas · frequência padrão ${FREQUENCIAS[cli!.frequencia_padrao as Frequencia].rotulo.toLowerCase()} · ${cli!.consultas_avulsas_usadas}/${cli!.consultas_avulsas} consultas avulsas usadas no plano`}
+        sub={`${placas.filter((p) => p.status !== "pausada").length} placas vigiadas · frequência ${rotuloFrequencia(cli!.frequencia_padrao).toLowerCase()} · ${cli!.consultas_avulsas_usadas}/${cli!.consultas_avulsas} consultas avulsas usadas no plano`}
         acoes={<Link href="/placas/importar" className="btn-contorno">Importar planilha</Link>}
       />
       <Mensagem ok={sp.ok} erro={sp.erro} />
@@ -58,7 +59,14 @@ export default async function Placas({ searchParams }: { searchParams: Promise<{
                   <tr key={p.id} className={p.status === "pausada" ? "opacity-60" : ""}>
                     <td><Placa placa={p.placa} tamanho="sm" /><div className="mt-1 text-xs text-suave">{p.apelido ?? p.modelo ?? ""} · {p.uf} · Renavam {p.renavam}</div></td>
                     <td className="text-xs">{p.grupo ?? "—"}<div className="text-suave">{p.centro_custo ?? ""}</div></td>
-                    <td className="text-xs">{STATUS[p.status]}{p.motivo_pausa ? ` (${p.motivo_pausa})` : ""}<div className="text-suave">{FREQUENCIAS[(p.frequencia ?? cli!.frequencia_padrao) as Frequencia].rotulo.split(" ")[0]}</div></td>
+                    <td className="text-xs">{STATUS[p.status]}{p.motivo_pausa ? ` (${p.motivo_pausa})` : ""}<div className="text-suave">{rotuloFrequencia(p.frequencia ?? cli!.frequencia_padrao).split(" (")[0]}{p.frequencia ? " (própria)" : ""}</div>
+                      {s.nivel === "franqueadora" && (
+                        <form action={salvarFrequenciaPlaca} className="mt-1 flex items-center gap-1">
+                          <input type="hidden" name="placaId" value={p.id} />
+                          <CampoFrequencia nome="frequencia" valor={p.frequencia} permitirPadrao compacto />
+                          <button className="btn-leve btn-sm">OK</button>
+                        </form>
+                      )}</td>
                     <td className="text-xs">{p.ultima_verificacao ? new Date(p.ultima_verificacao).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—"}<div className="text-suave">próx.: {dataBR(p.proxima_verificacao)}</div></td>
                     <td>{Number(p.abertas) ? <Link className="link" href={`/multas?placa=${p.placa}`}>{p.abertas}</Link> : "0"}</td>
                     <td>

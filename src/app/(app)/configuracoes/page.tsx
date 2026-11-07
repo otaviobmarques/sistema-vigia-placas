@@ -2,7 +2,8 @@ import QRCode from "qrcode";
 import { exigirCliente, noEscopo } from "@/lib/auth";
 import { urlOtpauth } from "@/lib/totp";
 import { brl } from "@/lib/domain/money";
-import { FREQUENCIAS } from "@/lib/domain/monitoramento";
+import { rotuloFrequencia } from "@/lib/domain/monitoramento";
+import { CampoFrequencia } from "@/components/frequencia";
 import { Abas, Cabecalho, Card, Mensagem } from "@/components/ui";
 import { confirmar2fa, convidarUsuario, iniciar2fa, salvarConfiguracoes } from "../../actions";
 
@@ -37,25 +38,31 @@ export default async function Configuracoes({ searchParams }: { searchParams: Pr
       <Abas ativo={aba} itens={ABAS.map(([id, r]) => ({ id, rotulo: r, href: `?aba=${id}` }))} />
       <Card>
         {aba === "monitoramento" && (
-          <form action={salvarConfiguracoes} className="space-y-4">
-            <input type="hidden" name="aba" value="monitoramento" />
-            <div className="max-w-sm"><label className="rotulo">Frequência padrão</label>
-              <select name="frequencia" defaultValue={c.frequencia_padrao} className="campo">{Object.entries(FREQUENCIAS).map(([k, f]) => <option key={k} value={k}>{f.rotulo}</option>)}</select>
-            </div>
-            <div>
-              <div className="rotulo">Por grupo de placas</div>
-              <div className="grid gap-2 sm:grid-cols-2">
-                {d.grupos.map((g) => (
-                  <label key={g.grupo} className="flex items-center justify-between gap-2 rounded-xl border border-borda p-3 text-sm">
-                    <span>{g.grupo || "Sem grupo"} <span className="text-suave">· {g.n} placas</span></span>
-                    <select name={`freq_grupo:${g.grupo}`} defaultValue={g.frequencia ?? ""} className="campo w-40 py-1.5"><option value="">Padrão</option>{Object.entries(FREQUENCIAS).map(([k, f]) => <option key={k} value={k}>{f.rotulo.split(" ")[0]}</option>)}</select>
-                  </label>
-                ))}
+          s.nivel === "franqueadora" ? (
+            <form action={salvarConfiguracoes} className="space-y-4">
+              <input type="hidden" name="aba" value="monitoramento" />
+              <div className="max-w-xl"><label className="rotulo">Frequência padrão do cliente</label><CampoFrequencia nome="frequencia" valor={c.frequencia_padrao} /></div>
+              <div>
+                <div className="rotulo">Por grupo de placas</div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {d.grupos.map((g) => (
+                    <div key={g.grupo} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-borda p-3 text-sm">
+                      <span>{g.grupo || "Sem grupo"} <span className="text-suave">· {g.n} placas</span></span>
+                      <CampoFrequencia nome={`freq_grupo:${g.grupo}`} valor={g.frequencia} permitirPadrao compacto />
+                    </div>
+                  ))}
+                </div>
               </div>
+              <p className="text-xs text-suave">A frequência é definida pela franqueadora. Adaptativa: semanal, e diária quando a placa teve multa nos últimos 30 dias ou tem prazo nos próximos 10. Também dá para ajustar por placa na tela Placas.</p>
+              <Salvar />
+            </form>
+          ) : (
+            <div className="space-y-3 text-sm">
+              <p>Frequência de consulta: <b>{rotuloFrequencia(c.frequencia_padrao)}</b></p>
+              {d.grupos.filter((g) => g.frequencia).map((g) => <p key={g.grupo} className="text-suave">{g.grupo || "Sem grupo"}: {rotuloFrequencia(g.frequencia)}</p>)}
+              <p className="text-xs text-suave">A frequência das consultas é definida pela franqueadora, conforme o plano contratado. Precisa de uma consulta fora do ciclo? Use “Consultar agora” na tela Placas.</p>
             </div>
-            <p className="text-xs text-suave">Adaptativa: semanal, e diária quando a placa teve multa nos últimos 30 dias ou tem prazo nos próximos 10. Pausar e reativar placas: tela Placas.</p>
-            <Salvar />
-          </form>
+          )
         )}
         {aba === "alertas" && (
           <form action={salvarConfiguracoes} className="grid max-w-2xl gap-4 sm:grid-cols-2">
