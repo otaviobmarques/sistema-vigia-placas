@@ -20,6 +20,7 @@ import { fecharMes } from "@/lib/services/faturamento";
 import { lerPlanilha, validarLinhas, type LinhaImport } from "@/lib/services/importacao";
 import { auditar, registrarEvento } from "@/lib/services/multas";
 import { asaasSimulado } from "@/lib/integrations/asaas";
+import { urlApp } from "@/lib/url";
 
 const s = (f: FormData, k: string) => String(f.get(k) ?? "").trim();
 const ir = (path: string, msg?: { ok?: string; erro?: string }): never => {
@@ -368,7 +369,7 @@ export async function convidarUsuario(f: FormData) {
     );
     await noEscopo(sessao, (db) =>
       db.q("insert into outbox (cliente_id, canal, destino, assunto, corpo) values ($1,'email',$2,'Convite para o Vigia Placa',$3)", [
-        sessao.clienteId, email, `Você foi convidado(a) para o Vigia Placa. Acesse ${process.env.APP_URL ?? ""}/login com a senha provisória ${senhaTemp} e troque no primeiro acesso.`,
+        sessao.clienteId, email, `Você foi convidado(a) para o Vigia Placa. Acesse ${urlApp()}/login com a senha provisória ${senhaTemp} e troque no primeiro acesso.`,
       ]),
     );
   } catch {
