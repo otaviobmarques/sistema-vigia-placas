@@ -5,6 +5,7 @@ import { exigirSessao, noEscopo } from "@/lib/auth";
 import { CreditoDomma, Logo } from "@/components/marca";
 import { sair, sairCliente } from "../actions";
 import { NavLink } from "@/components/nav-link";
+import { rotuloPerfil } from "@/lib/acesso";
 
 type Item = { href: string; rotulo: string; n?: number };
 
@@ -14,6 +15,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   if (s.trocarSenha && caminho !== "/conta") redirect("/conta?primeiro=1");
   const nCarrinho = s.clienteId
     ? Number((await noEscopo(s, (db) => db.one("select count(*) as n from carrinho_itens where cliente_id = $1", [s.clienteId])))?.n ?? 0)
+    : 0;
+
+  const nSolicitacoes = s.nivel !== "cliente"
+    ? Number((await noEscopo(s, (db) => db.one("select count(*) as n from solicitacoes_placa where status = 'pendente'")))?.n ?? 0)
     : 0;
 
   const itensCliente: Item[] = [
@@ -29,6 +34,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   ];
   const itensFranqueado: Item[] = [
     { href: "/carteira", rotulo: "Carteira" },
+    { href: "/solicitacoes", rotulo: "Solicitações de placas", n: nSolicitacoes || undefined },
     { href: "/hoje?todos=1", rotulo: "Faça hoje (todos)" },
     { href: "/placas/importar", rotulo: "Importar placas" },
     { href: "/financeiro", rotulo: "Comissões e repasses" },
@@ -37,12 +43,13 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const itensFranqueadora: Item[] = [
     { href: "/backoffice", rotulo: "Backoffice" },
     { href: "/carteira", rotulo: "Clientes" },
+    { href: "/solicitacoes", rotulo: "Solicitações de placas", n: nSolicitacoes || undefined },
     { href: "/financeiro", rotulo: "Financeiro" },
     { href: "/usuarios", rotulo: "Usuários" },
   ];
 
   const secoes: Array<{ titulo?: string; itens: Item[] }> = [];
-  if (s.nivel === "franqueadora") secoes.push({ titulo: "Franqueadora", itens: itensFranqueadora });
+  if (s.nivel === "franqueadora") secoes.push({ titulo: "Vigia Placa", itens: itensFranqueadora });
   if (s.nivel === "franqueado") secoes.push({ titulo: "Franqueado", itens: itensFranqueado });
   if (s.clienteId) secoes.push({ titulo: s.nivel === "cliente" ? undefined : "Cliente", itens: itensCliente });
 
@@ -71,6 +78,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         <div className="mt-4 border-t border-white/10 px-3 pt-4 text-xs text-white/60">
           <div className="truncate font-medium text-white">{s.nome}</div>
           <div className="truncate">{s.email}</div>
+          <div className="mt-1 inline-block rounded-md bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold text-white/80">{rotuloPerfil(s.nivel, s.perfil)}</div>
           <div className="mt-2 flex gap-3"><Link href="/conta" className="underline hover:text-white">Minha conta</Link><form action={sair}><button className="underline hover:text-white">Sair</button></form></div>
           <CreditoDomma negativo className="mt-4" />
         </div>

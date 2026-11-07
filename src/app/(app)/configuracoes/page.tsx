@@ -6,6 +6,7 @@ import { rotuloFrequencia } from "@/lib/domain/monitoramento";
 import { CampoFrequencia } from "@/components/frequencia";
 import { Abas, Cabecalho, Card, Mensagem } from "@/components/ui";
 import { confirmar2fa, convidarUsuario, iniciar2fa, salvarConfiguracoes } from "../../actions";
+import { rotuloPerfil } from "@/lib/acesso";
 
 export const metadata = { title: "Configurações" };
 
@@ -120,13 +121,13 @@ export default async function Configuracoes({ searchParams }: { searchParams: Pr
           <div className="space-y-6">
             <table className="tabela">
               <thead><tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Dois fatores</th></tr></thead>
-              <tbody>{d.usuarios.map((u) => <tr key={u.email}><td>{u.nome}</td><td>{u.email}</td><td>{u.perfil}</td><td>{u.dois ? "Ativo" : "—"}</td></tr>)}</tbody>
+              <tbody>{d.usuarios.map((u) => <tr key={u.email}><td>{u.nome}</td><td>{u.email}</td><td>{rotuloPerfil("cliente", u.perfil)}</td><td>{u.dois ? "Ativo" : "—"}</td></tr>)}</tbody>
             </table>
             <form action={convidarUsuario} className="grid gap-3 sm:grid-cols-5">
               <input name="nome" placeholder="Nome" className="campo" />
               <input name="email" required placeholder="E-mail ou usuário" autoCapitalize="none" className="campo" />
               <input name="senha" type="password" minLength={10} required placeholder="Senha provisória" autoComplete="new-password" className="campo" />
-              <select name="perfil" className="campo"><option value="gestor">Gestor</option><option value="financeiro">Financeiro</option><option value="leitura">Leitura</option><option value="admin">Administrador</option></select>
+              <select name="perfil" className="campo" defaultValue="leitura"><option value="admin">Responsável (vê e age: paga, indica, solicita placas)</option><option value="leitura">Visualizador (só vê)</option></select>
               <button className="btn-contorno">Criar acesso</button>
             </form>
             <div className="rounded-xl border border-borda p-4">

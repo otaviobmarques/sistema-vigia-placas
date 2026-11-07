@@ -41,10 +41,12 @@ export default async function Login() {
             <div className="mt-8 rounded-xl border border-borda bg-white p-4 text-xs text-suave">
               <div className="mb-2 font-semibold text-vigia">Contas de demonstração · senha vigia123</div>
               <ul className="space-y-1">
-                <li><b className="text-vigia">carla@transportadora.exemplo</b> · cliente (frota PJ)</li>
+                <li><b className="text-vigia">carla@transportadora.exemplo</b> · cliente Responsável (frota PJ)</li>
                 <li><b className="text-vigia">joao@exemplo.com.br</b> · cliente (pessoa física)</li>
                 <li><b className="text-vigia">franqueado@exemplo.com.br</b> · franqueado</li>
-                <li><b className="text-vigia">admin@vigiaplaca.com.br</b> · franqueadora</li>
+                <li><b className="text-vigia">admin@vigiaplaca.com.br</b> · Administrador do Sistema</li>
+                <li><b className="text-vigia">gestor@vigiaplaca.com.br</b> · Gestor do Vigia Placa</li>
+                <li><b className="text-vigia">diretoria@transportadora.exemplo</b> · cliente Visualizador</li>
               </ul>
             </div>
           )}

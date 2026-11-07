@@ -1,10 +1,11 @@
 import { exigirSessao, noEscopo } from "@/lib/auth";
-import { listarUsuarios, niveisPermitidos, PERFIS } from "@/lib/services/usuarios";
+import { listarUsuarios } from "@/lib/services/usuarios";
+import { ehAdminSistema, franquiasAtivas, niveisCriaveis, perfisAtribuiveis, rotuloPerfil } from "@/lib/acesso";
 import { Cabecalho, Card, Mensagem } from "@/components/ui";
 import { alternarUsuario, criarUsuarioAction, redefinirSenhaUsuario } from "../../actions";
 
 export const metadata = { title: "Usuários" };
-const NIVEL: Record<string, string> = { franqueadora: "Franqueadora", franqueado: "Franqueado", cliente: "Cliente" };
+const NIVEL: Record<string, string> = { franqueadora: "Equipe Vigia Placa", franqueado: "Franqueado", cliente: "Cliente" };
 
 export default async function Usuarios({ searchParams }: { searchParams: Promise<{ ok?: string; erro?: string }> }) {
   const s = await exigirSessao(["franqueadora", "franqueado"]);
@@ -14,34 +15,41 @@ export default async function Usuarios({ searchParams }: { searchParams: Promise
     franqueados: await db.q("select id, nome from franqueados where ativo order by nome"),
     clientes: await db.q("select id, nome from clientes where ativo order by nome"),
   }));
-  const niveis = niveisPermitidos(s.nivel);
+  const niveis = niveisCriaveis(s);
+  const gerencia = s.nivel === "franqueadora" ? ["admin", "gestor"].includes(s.perfil) : s.perfil === "admin";
+  // O Gestor do Vigia Placa só altera acessos de clientes.
+  const podeAlterar = (u: Record<string, any>) => gerencia && u.id !== s.usuarioId && (ehAdminSistema(s) || s.nivel !== "franqueadora" || u.nivel === "cliente");
+  const opcoesPerfil = niveis.flatMap((n) => perfisAtribuiveis(s, n).map((p) => ({ v: `${n}:${p}`, r: `${NIVEL[n]} · ${rotuloPerfil(n, p)}` })));
   return (
     <>
-      <Cabecalho titulo="Usuários" sub={s.nivel === "franqueadora" ? "Acessos da franqueadora, dos franqueados e dos clientes." : "Sua equipe e os acessos dos seus clientes."} />
+      <Cabecalho titulo="Usuários" sub={s.nivel === "franqueadora" ? (ehAdminSistema(s) ? "Acessos da equipe Vigia Placa e dos clientes." : "Acessos dos clientes. A equipe Vigia Placa é gerenciada pelo Administrador do Sistema.") : "Sua equipe e os acessos dos seus clientes."} />
       <Mensagem ok={sp.ok} erro={sp.erro} />
-      <Card titulo="Novo acesso" className="mb-6">
+      {gerencia && <Card titulo="Novo acesso" className="mb-6">
         <form action={criarUsuarioAction} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <div><label className="rotulo">Nome</label><input name="nome" required className="campo" /></div>
           <div><label className="rotulo">Login (e-mail ou usuário)</label><input name="login" required autoCapitalize="none" className="campo" /></div>
           <div><label className="rotulo">Senha provisória (mín. 10)</label><input name="senha" type="password" minLength={10} required autoComplete="new-password" className="campo" /></div>
-          <div><label className="rotulo">Nível</label>
-            <select name="nivel" className="campo" defaultValue={niveis[niveis.length - 1]}>{niveis.map((n) => <option key={n} value={n}>{NIVEL[n]}</option>)}</select>
+          <div><label className="rotulo">Tipo de acesso</label>
+            <select name="tipo" className="campo" defaultValue={opcoesPerfil.find((o) => o.v.startsWith("cliente:"))?.v}>{opcoesPerfil.map((o) => <option key={o.v} value={o.v}>{o.r}</option>)}</select>
           </div>
-          {s.nivel === "franqueadora" && (
+          {s.nivel === "franqueadora" && franquiasAtivas() && (
             <div><label className="rotulo">Franqueado (se nível franqueado)</label>
               <select name="franqueadoId" className="campo"><option value="">—</option>{d.franqueados.map((f) => <option key={f.id} value={f.id}>{f.nome}</option>)}</select>
             </div>
           )}
-          <div><label className="rotulo">Cliente (se nível cliente)</label>
+          <div><label className="rotulo">Cliente (para acessos de cliente)</label>
             <select name="clienteId" className="campo"><option value="">—</option>{d.clientes.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}</select>
-          </div>
-          <div><label className="rotulo">Perfil</label>
-            <select name="perfil" className="campo" defaultValue="admin">{Object.entries(PERFIS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
           </div>
           <div className="flex items-end"><button className="btn-primario w-full">Criar acesso</button></div>
         </form>
-        <p className="mt-2 text-xs text-suave">A pessoa entra com a senha provisória e é obrigada a criar uma senha própria no primeiro acesso. Repasse a senha por um canal seguro.</p>
-      </Card>
+        <ul className="mt-3 space-y-1 text-xs text-suave">
+          {ehAdminSistema(s) && <li><b className="text-vigia">Administrador do Sistema:</b> tudo, inclusive gateways de pagamento, APIs, fontes de dados e regras de consulta.</li>}
+          {ehAdminSistema(s) && <li><b className="text-vigia">Gestor do Vigia Placa:</b> clientes, placas, planos, financeiro e aprovação das solicitações, sem a parte técnica.</li>}
+          <li><b className="text-vigia">Cliente Responsável:</b> vê e age nas próprias placas e multas (paga, indica condutor, solicita inclusão e remoção de placas).</li>
+          <li><b className="text-vigia">Cliente Visualizador:</b> só vê.</li>
+          <li>A pessoa entra com a senha provisória e cria uma senha própria no primeiro acesso. Repasse a senha por um canal seguro.</li>
+        </ul>
+      </Card>}
       <Card titulo={`Acessos (${d.usuarios.length})`}>
         <div className="-mx-5 overflow-x-auto">
           <table className="tabela min-w-[900px]">
@@ -53,10 +61,10 @@ export default async function Usuarios({ searchParams }: { searchParams: Promise
                   <td className="text-xs">{u.email}</td>
                   <td className="text-xs">{NIVEL[u.nivel]}</td>
                   <td className="text-xs">{u.franqueado_nome ?? u.cliente_nome ?? "—"}</td>
-                  <td className="text-xs">{PERFIS[u.perfil as keyof typeof PERFIS].split(" (")[0]}</td>
+                  <td className="text-xs">{rotuloPerfil(u.nivel, u.perfil)}</td>
                   <td className="text-xs">{!u.ativo ? "Desativado" : u.trocar_senha ? "Senha provisória" : "Ativo"}{u.dois_fatores ? " · 2FA" : ""}</td>
                   <td>
-                    {u.id !== s.usuarioId && (
+                    {podeAlterar(u) && (
                       <form action={redefinirSenhaUsuario} className="flex gap-1">
                         <input type="hidden" name="id" value={u.id} />
                         <input name="senha" type="password" minLength={10} required placeholder="nova provisória" autoComplete="new-password" className="campo w-36 py-1 text-xs" />
@@ -65,7 +73,7 @@ export default async function Usuarios({ searchParams }: { searchParams: Promise
                     )}
                   </td>
                   <td className="text-right">
-                    {u.id !== s.usuarioId && (
+                    {podeAlterar(u) && (
                       <form action={alternarUsuario}><input type="hidden" name="id" value={u.id} /><input type="hidden" name="ativo" value={u.ativo ? "0" : "1"} /><button className="btn-leve btn-sm">{u.ativo ? "Desativar" : "Reativar"}</button></form>
                     )}
                   </td>

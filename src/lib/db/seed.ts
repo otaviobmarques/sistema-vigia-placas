@@ -49,11 +49,14 @@ async function semear(db: Db) {
   await db.q(
     `insert into usuarios (email, nome, senha_hash, nivel, franqueado_id, cliente_id) values
      ('admin@vigiaplaca.com.br','Equipe Vigia Placa',$1,'franqueadora',null,null),
+     ('gestor@vigiaplaca.com.br','Gestão Vigia Placa',$1,'franqueadora',null,null),
      ('franqueado@exemplo.com.br','Rafael (Franqueado Exemplo)',$1,'franqueado',$2,null),
      ('carla@transportadora.exemplo','Carla',$1,'cliente',null,$3),
      ('joao@exemplo.com.br','João',$1,'cliente',null,$4)`,
     [senha, F, T, J],
   );
+  await db.q("update usuarios set perfil = 'gestor' where email = 'gestor@vigiaplaca.com.br'");
+  await db.q("insert into usuarios (email, nome, senha_hash, nivel, perfil, cliente_id) values ('diretoria@transportadora.exemplo','Diretoria (Visualizador)',$1,'cliente','leitura',$2)", [senha, T]);
 
   const condutores: Record<string, string> = {};
   for (const [nome, cpf, pts, cat, cnhVal, toxVal] of [
