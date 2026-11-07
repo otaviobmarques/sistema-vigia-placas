@@ -8,14 +8,14 @@ export function TestarFonte({ fontes, ativo }: { fontes: Array<{ servico: string
     <div>
       <form action={acao} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <div className="lg:col-span-2"><label className="rotulo">Fonte</label>
-          <select name="servico" className="campo">{fontes.map((f) => <option key={f.servico} value={f.servico}>{f.nome} ({f.servico}){f.aConfirmar ? " · a confirmar" : ""}</option>)}</select>
+          <select name="servico" className="campo">{fontes.map((f) => <option key={f.servico} value={f.servico}>{f.nome}{f.aConfirmar ? " · a confirmar" : ""}</option>)}</select>
         </div>
         <div><label className="rotulo">Placa</label><input name="placa" className="campo uppercase" placeholder="ABC1D23" /></div>
         <div><label className="rotulo">Renavam</label><input name="renavam" inputMode="numeric" className="campo" /></div>
         <div><label className="rotulo">CPF/CNPJ do dono (só RJ)</label><input name="documento" className="campo" /></div>
         <div className="lg:col-span-5 flex items-center gap-3">
           <button className="btn-primario btn-sm" disabled={!ativo || pendente}>{pendente ? "Consultando (pode levar 1 min)…" : "Testar consulta real"}</button>
-          <span className="text-xs text-suave">{ativo ? "Cobra uma consulta da sua conta Infosimples. Nada é gravado no sistema." : "Configure INFOSIMPLES_TOKEN para usar."}</span>
+          <span className="text-xs text-suave">{ativo ? "Cobra uma consulta da conta do fornecedor (a Infosimples cobra até erros). Nada é gravado no sistema." : "Configure um token de fonte para usar."}</span>
         </div>
       </form>
       {estado.erro && <p className="mt-3 text-sm text-rec">{estado.erro}</p>}

@@ -694,6 +694,32 @@ export async function atualizarDefesaAction(f: FormData) {
 export async function testarFonteInfosimples(_: unknown, f: FormData): Promise<{ erro?: string; servico?: string; resumo?: string; multas?: Array<Record<string, unknown>>; bruto?: string }> {
   await exigirSessao(["franqueadora"]);
   const { FONTES, chamarServico, interpretarResposta, montarParametros, modoSimulado } = await import("@/lib/integrations/infosimples");
+  const dd = await import("@/lib/integrations/directdata");
+  if (s(f, "servico") === dd.SERVICO_DIRECTDATA) {
+    if (!dd.directDataAtiva()) return { erro: "Sem DIRECTDATA_TOKEN: configure o token na Vercel." };
+    const pv = validarPlaca(s(f, "placa"));
+    const rv = validarRenavam(s(f, "renavam"));
+    if (!pv.ok) return { erro: pv.erro };
+    if (!rv.ok) return { erro: (rv as any).erro };
+    try {
+      const json = await dd.chamarDirectData(pv.placa, rv.renavam);
+      const r = dd.interpretarDirectData(json);
+      // Dados pessoais do proprietário não são exibidos nem guardados.
+      if (json?.retorno) {
+        if (json.retorno.nomeProprietario) json.retorno.nomeProprietario = "[oculto]";
+        if (json.retorno.documentoProprietario) json.retorno.documentoProprietario = "[oculto]";
+      }
+      const bruto = JSON.stringify(json, null, 2);
+      return {
+        servico: dd.SERVICO_DIRECTDATA,
+        resumo: r.ok ? `OK (${json?.metaDados?.resultado}) · ${r.multas.length} multa(s) reconhecida(s) · custo R$ ${(r.custo / 100).toFixed(2).replace(".", ",")}` : `Erro: ${r.erro}`,
+        multas: r.multas.map((m) => ({ auto: m.autoInfracao, orgao: m.orgaoNome, descricao: m.descricao, valor: (m.valor / 100).toFixed(2), data: m.dataInfracao, vencimento: m.vencimento, pontos: m.pontos })),
+        bruto: bruto.length > 20000 ? bruto.slice(0, 20000) + "\n… (cortado)" : bruto,
+      };
+    } catch (e: any) {
+      return { erro: `Falha ao chamar a Direct Data: ${e.message}` };
+    }
+  }
   if (modoSimulado()) return { erro: "Sem INFOSIMPLES_TOKEN: configure o token na Vercel para testar as fontes reais." };
   const fonte = FONTES.find((x) => x.servico === s(f, "servico"));
   if (!fonte) return { erro: "Escolha uma fonte." };
