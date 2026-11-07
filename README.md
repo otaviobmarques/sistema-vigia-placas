@@ -33,7 +33,7 @@ Testes das regras de negócio: `npm test` · checagem de tipos: `npm run typeche
 | Perfil | O que faz |
 |---|---|
 | **Administrador do Sistema** (equipe Vigia Placa) | Tudo, inclusive a parte técnica: gateways de pagamento, APIs, fontes de dados, regras e tempo de consulta, cobertura e varredura manual. Único que cria a equipe Vigia Placa. |
-| **Gestor do Vigia Placa** (equipe Vigia Placa) | Clientes (com **preço personalizado** por placa e % de saving por cliente), cadastro manual de placas, **importação em lote** com o modelo de planilha, financeiro e aprovação das **solicitações de placas**. Gerencia os acessos dos clientes. Não vê o Backoffice nem a parte técnica. |
+| **Gestor do Vigia Placa** (equipe Vigia Placa) | Clientes (com **preço personalizado** por placa e % de saving por cliente), cadastro manual de placas, **importação em lote** com o modelo de planilha, financeiro e aprovação das **solicitações de placas**. Gerencia os acessos dos clientes. Entra no **Painel da operação** (placas gerenciadas, multas, top 10 e faturamento por cliente, custo com consultas de API, custo por fonte e evolução mensal). Não vê o Backoffice nem a parte técnica. |
 | **Cliente Responsável** | Vê e age nas próprias placas e multas (paga, indica condutor, pede defesa) e **solicita** inclusão, remoção ou reativação de placas. A equipe aprova em *Solicitações de placas*. |
 | **Cliente Visualizador** | Só vê. |
 

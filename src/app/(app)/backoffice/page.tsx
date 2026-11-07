@@ -18,7 +18,7 @@ const ABAS_TECNICAS: string[] = ["regras", "fontes", "cobertura"];
 const pct = (bps: number) => (bps / 100).toLocaleString("pt-BR");
 
 export default async function Backoffice({ searchParams }: { searchParams: Promise<{ aba?: string; ok?: string; erro?: string }> }) {
-  const s = await exigirAdminSistema("/carteira");
+  const s = await exigirAdminSistema("/painel");
   const sp = await searchParams;
   // Parte técnica (regras de consulta, fontes e cobertura) só para o Administrador do Sistema; franqueados escondidos.
   const abas = ABAS.filter(([id]) => (ehAdminSistema(s) || !ABAS_TECNICAS.includes(id)) && (id !== "franqueados" || franquiasAtivas()));
