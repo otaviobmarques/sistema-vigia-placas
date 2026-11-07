@@ -3,6 +3,8 @@ import { notFound } from "next/navigation";
 import { exigirCliente, noEscopo } from "@/lib/auth";
 import { SELECT_MULTA, regra, type MultaRow } from "@/lib/services/multas";
 import { recomendacao } from "@/lib/domain/acoes";
+import { simularIndicacao } from "@/lib/domain/condutores";
+import { listarCondutores } from "@/lib/services/condutores";
 import { GRAVIDADES, elegivel40, melhorValorHoje, pagavel, prazoIndicacao, valoresMulta, ESTADOS } from "@/lib/domain/ctb";
 import { dataBR, dataCurta, diasEntre, hojeISO } from "@/lib/domain/dates";
 import { brl } from "@/lib/domain/money";
@@ -20,7 +22,8 @@ export default async function DetalheMulta({ params, searchParams }: { params: P
     return {
       m,
       eventos: await db.q("select * from eventos where multa_id = $1 order by data", [id]),
-      condutores: await db.q("select id, nome, pontos_12m from condutores where cliente_id = $1 order by nome", [s.clienteId]),
+      condutores: (await listarCondutores(db, s.clienteId)).filter((c) => c.ativo),
+      principal: (await db.one("select condutor_principal_id as id from placas where id = (select placa_id from multas where id = $1)", [id]))?.id ?? null,
       defesa: await db.one("select * from pedidos_defesa where multa_id = $1 order by criado_em desc limit 1", [id]),
       cfg: await db.one("select preco_defesa from configuracao"),
       captura: await db.one("select arquivo_nome, origem from notificacoes_capturadas where multa_id = $1 limit 1", [id]),
@@ -115,12 +118,20 @@ export default async function DetalheMulta({ params, searchParams }: { params: P
                     Veículo de empresa: indique quem dirigia até <b className="text-vigia">{dataBR(limInd)}</b> para evitar a multa NIC de <b className="text-rec">{brl(v.nic)}</b> (art. 257, § 8º).
                   </p>
                   {d.condutores.length ? (
-                    <form action={indicar} className="flex flex-wrap gap-2">
+                    <form action={indicar} className="space-y-2">
                       <input type="hidden" name="multaId" value={m.id} />
-                      <select name="condutorId" className="campo max-w-xs" required>
-                        {d.condutores.map((c) => <option key={c.id} value={c.id}>{c.nome} · {c.pontos_12m} pts em 12 meses</option>)}
-                      </select>
-                      <button className="btn-primario">Enviar link de aceite</button>
+                      <div className="flex flex-wrap gap-2">
+                        <select name="condutorId" className="campo max-w-md" required defaultValue={d.principal ?? undefined}>
+                          {d.condutores.map((c) => {
+                            const sim = simularIndicacao(c.situacao, m.pontos, m.gravidade === "gravissima");
+                            return <option key={c.id} value={c.id}>{c.nome}{c.id === d.principal ? " (principal da placa)" : ""} · {c.situacao.pontos}→{sim.pontos} de {sim.limite} pts{sim.atingeLimite ? " · ATINGE O LIMITE" : ""}</option>;
+                          })}
+                        </select>
+                        <button className="btn-primario">Enviar link de aceite</button>
+                      </div>
+                      {d.condutores.some((c) => simularIndicacao(c.situacao, m.pontos, m.gravidade === "gravissima").atingeLimite) && (
+                        <Aviso tom="ambar">Atenção: para {d.condutores.filter((c) => simularIndicacao(c.situacao, m.pontos, m.gravidade === "gravissima").atingeLimite).map((c) => c.nome).join(", ")}, assumir esta multa ({m.pontos} pts) leva ao limite do art. 261 e pode suspender a CNH. Indique só quem realmente dirigia.</Aviso>
+                      )}
                     </form>
                   ) : <Aviso>Cadastre um condutor em <Link className="link" href="/condutores">Condutores</Link> para indicar.</Aviso>}
                 </>
