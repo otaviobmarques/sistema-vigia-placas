@@ -32,6 +32,8 @@ export interface NovoUsuario {
   perfil: Perfil;
   franqueadoId: string | null;
   clienteId: string | null;
+  /** Senha definida pela equipe e já definitiva (sem troca obrigatória no primeiro acesso). */
+  senhaDefinitiva?: boolean;
 }
 
 /** Níveis que cada nível pode criar (a regra definitiva está no banco). */
@@ -52,9 +54,9 @@ export async function criarUsuario(db: Db, u: NovoUsuario) {
   if (existe) throw new Error("Já existe um usuário com este login.");
   await db.q(
     `insert into usuarios (email, nome, senha_hash, nivel, perfil, franqueado_id, cliente_id, trocar_senha)
-     values ($1,$2,$3,$4,$5,$6,$7,true)`,
+     values ($1,$2,$3,$4,$5,$6,$7,$8)`,
     [login, u.nome || login, bcrypt.hashSync(u.senha, 12), u.nivel,
-     u.perfil, u.nivel === "franqueado" ? u.franqueadoId : null, u.nivel === "cliente" ? u.clienteId : null],
+     u.perfil, u.nivel === "franqueado" ? u.franqueadoId : null, u.nivel === "cliente" ? u.clienteId : null, !u.senhaDefinitiva],
   );
   return login;
 }

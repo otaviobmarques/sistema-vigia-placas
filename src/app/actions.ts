@@ -9,6 +9,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { criarSessao, encerrarSessao, escolherCliente, exigirAdminSistema, exigirCliente, exigirSessao, noEscopo, podeAgir, type Sessao } from "@/lib/auth";
 import { ehAdminSistema, ehEquipeVigia, niveisCriaveis, perfisAtribuiveis } from "@/lib/acesso";
+import { ehCiclo } from "@/lib/domain/ciclo";
 import { sistema, type Db } from "@/lib/db";
 import { verificarTOTP, gerarSegredo } from "@/lib/totp";
 import { hojeISO } from "@/lib/domain/dates";
@@ -49,6 +50,11 @@ export async function entrar(_: unknown, f: FormData): Promise<{ erro?: string; 
   const u = await sistema((db) => db.one("select * from usuarios where email = $1", [email]));
   if (!u || !(await bcrypt.compare(s(f, "senha"), u.senha_hash))) return { erro: "E-mail ou senha incorretos.", email };
   if (u.ativo === false) return { erro: "Este acesso foi desativado. Fale com o administrador.", email };
+  if (u.cliente_id) {
+    const c = await sistema((db) => db.one("select bloqueado_em, excluido_em from clientes where id = $1", [u.cliente_id]));
+    if (c?.excluido_em) return { erro: "Esta conta foi encerrada. Fale com a equipe Vigia Placa.", email };
+    if (c?.bloqueado_em) return { erro: "Esta conta está bloqueada. Fale com a equipe Vigia Placa.", email };
+  }
   if (u.totp_secret) {
     const codigo = s(f, "codigo");
     if (!codigo) return { pedirCodigo: true, email };
@@ -255,6 +261,34 @@ async function inserirPlaca(db: Db, clienteId: string, p: { placa: string; renav
     [clienteId, p.placa, p.renavam, p.uf, p.apelido || null, p.grupo || null, p.centro_custo || null, p.sne || null],
   );
   return r!.id;
+}
+
+/** Cadastro individual pela equipe (Cadastrar placa): escolhe o cliente no formulário. */
+export async function cadastrarPlacaEquipe(f: FormData) {
+  const sessao = await exigirSessao(["franqueadora", "franqueado"]);
+  const clienteId = s(f, "clienteId");
+  const volta = `/placas/nova?cliente=${clienteId}`;
+  const pv = validarPlaca(s(f, "placa"));
+  const rv = validarRenavam(s(f, "renavam"));
+  if (!clienteId) ir("/placas/nova", { erro: "Escolha o cliente." });
+  if (!pv.ok) ir(volta, { erro: pv.erro });
+  if (!rv.ok) ir(volta, { erro: rv.erro });
+  let id: string;
+  try {
+    id = await noEscopo(sessao, async (db) => {
+      const c = await db.one("select 1 from clientes where id = $1 and ativo and excluido_em is null and bloqueado_em is null", [clienteId]);
+      if (!c) throw new Error("Cliente não encontrado, bloqueado ou excluído.");
+      const novo = await inserirPlaca(db, clienteId, { placa: (pv as any).placa, renavam: (rv as any).renavam, uf: s(f, "uf").toUpperCase(), apelido: s(f, "apelido"), grupo: s(f, "grupo"), centro_custo: s(f, "centro_custo"), sne: s(f, "sne") || null });
+      await auditar(db, { usuarioId: sessao.usuarioId, clienteId, acao: "placa_cadastrada", entidade: "placa", entidadeId: novo, dados: { placa: (pv as any).placa } });
+      return novo;
+    });
+  } catch (e: any) {
+    ir(volta, { erro: String(e.message).includes("placas_unica_ativa") ? "Esta placa já está ativa em outro cliente." : String(e.message).includes("duplicate") ? "Esta placa já está cadastrada neste cliente." : e.message });
+  }
+  const r = await sistema((db) => consultarPlaca(db, id!));
+  despacharDepois();
+  revalidatePath("/", "layout");
+  ir(volta, { ok: `Placa ${(pv as any).placa} cadastrada e consultada: ${r.total} multa(s) encontrada(s). Pode lançar a próxima.` });
 }
 
 export async function adicionarPlaca(f: FormData) {
@@ -630,6 +664,7 @@ export async function criarUsuarioAction(f: FormData) {
     login = await noEscopo(sessao, async (db) => {
       const l = await criarUsuario(db, {
         login: s(f, "login"), nome: s(f, "nome"), senha: s(f, "senha"), nivel, perfil: perfil as Perfil,
+        senhaDefinitiva: nivel === "cliente" && ehEquipeVigia(sessao) && f.get("senha_definitiva") === "on",
         franqueadoId: nivel !== "franqueado" ? null : sessao.nivel === "franqueado" ? sessao.franqueadoId : s(f, "franqueadoId") || null,
         clienteId: nivel === "cliente" ? s(f, "clienteId") || null : null,
       });
@@ -681,17 +716,71 @@ function lerPrecoPersonalizado(f: FormData, volta: string, sessao: Sessao): { pr
   return { preco, saving };
 }
 
-export async function salvarPrecoCliente(f: FormData) {
+/** Forma de pagamento, ciclo de fechamento e prazo de vencimento (dias após o fechamento). */
+function lerCobranca(f: FormData) {
+  const forma = ["pix", "boleto", "cartao"].includes(s(f, "forma_cobranca")) ? s(f, "forma_cobranca") : "pix";
+  const ciclo = ehCiclo(s(f, "ciclo_fechamento")) ? s(f, "ciclo_fechamento") : "mensal";
+  const v = Number(s(f, "vencimento_dias") || 5);
+  return { forma, ciclo, vencimento: Number.isInteger(v) && v >= 0 && v <= 60 ? v : 5 };
+}
+
+async function exigirGestaoClientes(volta = "/carteira") {
   const sessao = await exigirSessao(["franqueadora"]);
-  if (!["admin", "gestor"].includes(sessao.perfil)) ir("/carteira", { erro: "Seu perfil não altera preços." });
+  if (!["admin", "gestor"].includes(sessao.perfil)) ir(volta, { erro: "Seu perfil não gerencia clientes." });
+  return sessao;
+}
+
+export async function salvarCobrancaCliente(f: FormData) {
+  const sessao = await exigirGestaoClientes();
   const preco = lerPrecoPersonalizado(f, "/carteira", sessao)!;
+  const cob = lerCobranca(f);
   const clienteId = s(f, "clienteId");
   await noEscopo(sessao, async (db) => {
-    await db.q("update clientes set preco_placa_personalizado = $2, saving_bps_personalizado = $3 where id = $1", [clienteId, preco.preco, preco.saving]);
-    await auditar(db, { usuarioId: sessao.usuarioId, clienteId, acao: "preco_personalizado", entidade: "cliente", entidadeId: clienteId, dados: preco });
+    await db.q(
+      "update clientes set preco_placa_personalizado = $2, saving_bps_personalizado = $3, forma_cobranca = $4, ciclo_fechamento = $5, vencimento_dias = $6 where id = $1",
+      [clienteId, preco.preco, preco.saving, cob.forma, cob.ciclo, cob.vencimento],
+    );
+    await auditar(db, { usuarioId: sessao.usuarioId, clienteId, acao: "cobranca_cliente", entidade: "cliente", entidadeId: clienteId, dados: { ...preco, ...cob } });
   });
   revalidatePath("/", "layout");
-  ir("/carteira", { ok: preco.preco === null && preco.saving === null ? "Cliente voltou ao preço do plano." : "Preço personalizado salvo. Vale a partir da próxima fatura." });
+  ir("/carteira", { ok: "Cobrança do cliente salva. Vale a partir da próxima fatura." });
+}
+
+export async function bloquearCliente(f: FormData) {
+  const sessao = await exigirGestaoClientes();
+  const clienteId = s(f, "clienteId");
+  const bloquear = s(f, "acao") !== "desbloquear";
+  const c = await noEscopo(sessao, async (db) => {
+    const r = await db.one("select nome from clientes where id = $1 and excluido_em is null", [clienteId]);
+    if (!r) return null;
+    await db.q("update clientes set bloqueado_em = $2, motivo_bloqueio = $3 where id = $1", [clienteId, bloquear ? new Date().toISOString() : null, bloquear ? s(f, "motivo") || null : null]);
+    await auditar(db, { usuarioId: sessao.usuarioId, clienteId, acao: bloquear ? "cliente_bloqueado" : "cliente_desbloqueado", entidade: "cliente", entidadeId: clienteId, dados: { motivo: s(f, "motivo") || null } });
+    return r;
+  });
+  if (!c) ir("/carteira", { erro: "Cliente não encontrado." });
+  revalidatePath("/", "layout");
+  ir("/carteira", { ok: bloquear ? `${c!.nome} bloqueado: os acessos do cliente foram suspensos e as placas param de ser consultadas.` : `${c!.nome} desbloqueado.` });
+}
+
+/** Exclusão lógica: some das listas, encerra acessos e monitoramento; o histórico financeiro e de multas fica guardado. */
+export async function excluirCliente(f: FormData) {
+  const sessao = await exigirGestaoClientes();
+  const clienteId = s(f, "clienteId");
+  const c = await noEscopo(sessao, (db) => db.one("select nome from clientes where id = $1 and excluido_em is null", [clienteId]));
+  if (!c) ir("/carteira", { erro: "Cliente não encontrado." });
+  if (s(f, "confirmacao").trim().toLowerCase() !== String(c!.nome).trim().toLowerCase()) {
+    ir("/carteira", { erro: `Para excluir, digite exatamente o nome do cliente: ${c!.nome}` });
+  }
+  await noEscopo(sessao, async (db) => {
+    await db.q("update clientes set excluido_em = now(), ativo = false where id = $1", [clienteId]);
+    await db.q("update usuarios set ativo = false where cliente_id = $1", [clienteId]);
+    await db.q("update placas set status = 'pausada', motivo_pausa = 'cliente excluído' where cliente_id = $1", [clienteId]);
+    await db.q("update solicitacoes_placa set status = 'cancelada', decidido_em = now() where cliente_id = $1 and status = 'pendente'", [clienteId]);
+    await db.q("delete from carrinho_itens where cliente_id = $1", [clienteId]);
+    await auditar(db, { usuarioId: sessao.usuarioId, clienteId, acao: "cliente_excluido", entidade: "cliente", entidadeId: clienteId });
+  });
+  revalidatePath("/", "layout");
+  ir("/carteira", { ok: `${c!.nome} foi excluído. Os acessos foram encerrados e as placas saíram do monitoramento; o histórico fica guardado.` });
 }
 
 export async function criarCliente(f: FormData) {
@@ -719,6 +808,8 @@ export async function criarCliente(f: FormData) {
          ip, cfg!.termo_versao, novoId],
       );
       if (preco) await db.q("update clientes set preco_placa_personalizado = $2, saving_bps_personalizado = $3 where id = $1", [novoId, preco.preco, preco.saving]);
+      const cob = lerCobranca(f);
+      await db.q("update clientes set ciclo_fechamento = $2, vencimento_dias = $3 where id = $1", [novoId, cob.ciclo, cob.vencimento]);
       await auditar(db, { usuarioId: sessao.usuarioId, clienteId: novoId, acao: "cliente_criado", entidade: "cliente", entidadeId: novoId, dados: { aceite_ip: ip } });
       return novoId;
     });
@@ -728,7 +819,7 @@ export async function criarCliente(f: FormData) {
   if (s(f, "email_admin")) {
     try {
       await noEscopo(sessao, (db) =>
-        criarUsuario(db, { login: s(f, "email_admin"), nome: s(f, "nome"), senha: s(f, "senha_admin"), nivel: "cliente", perfil: "admin", franqueadoId: null, clienteId: id! }),
+        criarUsuario(db, { login: s(f, "email_admin"), nome: s(f, "nome"), senha: s(f, "senha_admin"), nivel: "cliente", perfil: "admin", franqueadoId: null, clienteId: id!, senhaDefinitiva: ehEquipeVigia(sessao) && f.get("senha_definitiva") === "on" }),
       );
     } catch (e: any) {
       avisos.push(`Acesso do cliente não criado: ${e.message}`);
@@ -881,7 +972,7 @@ export async function fecharMesAction(f: FormData) {
   await exigirSessao(["franqueadora"]);
   const mes = s(f, "mes") || hojeISO().slice(0, 7);
   const n = await sistema((db) => fecharMes(db, mes));
-  ir("/financeiro", { ok: `Faturas de ${mes} calculadas para ${n} cliente(s).` });
+  ir(`/financeiro?mes=${mes}`, { ok: `${n} fatura(s) de ${mes} calculada(s), cada cliente no seu ciclo de fechamento.` });
 }
 
 export async function atualizarDefesaAction(f: FormData) {

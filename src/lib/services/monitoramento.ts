@@ -165,6 +165,7 @@ export async function varredura(db: Db, limite = 200) {
   const hoje = hojeISO();
   const devidas = await db.q<{ id: string }>(
     `select id from placas where status in ('ativa','aguardando') and (proxima_verificacao is null or proxima_verificacao <= $1)
+       and cliente_id in (select id from clientes where bloqueado_em is null and excluido_em is null)
      order by proxima_verificacao nulls first limit $2`,
     [hoje, limite],
   );

@@ -28,7 +28,7 @@ export default async function Usuarios({ searchParams }: { searchParams: Promise
         <form action={criarUsuarioAction} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <div><label className="rotulo">Nome</label><input name="nome" required className="campo" /></div>
           <div><label className="rotulo">Login (e-mail ou usuário)</label><input name="login" required autoCapitalize="none" className="campo" /></div>
-          <div><label className="rotulo">Senha provisória (mín. 10)</label><input name="senha" type="password" minLength={10} required autoComplete="new-password" className="campo" /></div>
+          <div><label className="rotulo">Senha (mín. 10)</label><input name="senha" type="password" minLength={10} required autoComplete="new-password" className="campo" /></div>
           <div><label className="rotulo">Tipo de acesso</label>
             <select name="tipo" className="campo" defaultValue={opcoesPerfil.find((o) => o.v.startsWith("cliente:"))?.v}>{opcoesPerfil.map((o) => <option key={o.v} value={o.v}>{o.r}</option>)}</select>
           </div>
@@ -40,6 +40,12 @@ export default async function Usuarios({ searchParams }: { searchParams: Promise
           <div><label className="rotulo">Cliente (para acessos de cliente)</label>
             <select name="clienteId" className="campo"><option value="">—</option>{d.clientes.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}</select>
           </div>
+          {s.nivel === "franqueadora" && (
+            <label className="flex items-start gap-2 text-sm sm:col-span-2">
+              <input type="checkbox" name="senha_definitiva" defaultChecked className="mt-1 accent-vigia" />
+              <span>Senha definitiva para acessos de cliente <span className="block text-xs text-suave">O cliente entra com o usuário e a senha definidos aqui, sem troca obrigatória.</span></span>
+            </label>
+          )}
           <div className="flex items-end"><button className="btn-primario w-full">Criar acesso</button></div>
         </form>
         <ul className="mt-3 space-y-1 text-xs text-suave">

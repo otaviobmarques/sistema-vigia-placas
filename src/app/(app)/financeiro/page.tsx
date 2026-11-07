@@ -1,6 +1,9 @@
 import { exigirSessao, noEscopo } from "@/lib/auth";
 import { calcularFatura } from "@/lib/services/faturamento";
-import { hojeISO, nomeMes } from "@/lib/domain/dates";
+import { dataBR, hojeISO, nomeMes } from "@/lib/domain/dates";
+import { CICLOS, type Ciclo } from "@/lib/domain/ciclo";
+
+const FORMA: Record<string, string> = { pix: "Pix", boleto: "Boleto", cartao: "Cartão" };
 import { brl } from "@/lib/domain/money";
 import { Cabecalho, Card, Mensagem, Numero } from "@/components/ui";
 import { fecharMesAction } from "../../actions";
@@ -17,7 +20,7 @@ export default async function Financeiro({ searchParams }: { searchParams: Promi
     for (const c of clientes) previas.push(await calcularFatura(db, c.id, mes));
     const pagamentos = await db.q(
       "select p.*, c.nome from pagamentos p join clientes c on c.id = p.cliente_id where to_char(p.criado_em, 'YYYY-MM') = $1 order by p.criado_em desc", [mes]);
-    const faturas = await db.q("select f.*, c.nome from faturas f join clientes c on c.id = f.cliente_id where f.mes = $1", [mes]);
+    const faturas = await db.q("select f.*, c.nome from faturas f join clientes c on c.id = f.cliente_id where f.mes = $1 order by f.periodo_inicio, c.nome", [mes]);
     return { previas, pagamentos, faturas };
   });
   const tot = (k: "mensalidades" | "saving" | "conveniencia" | "defesa" | "splitFranqueado") => d.previas.reduce((a, f) => a + f[k], 0);
@@ -52,17 +55,18 @@ export default async function Financeiro({ searchParams }: { searchParams: Promi
         )}
       </div>
       <Card titulo="Faturas por cliente" acoes={s.nivel === "franqueadora" ? (
-        <form action={fecharMesAction}><input type="hidden" name="mes" value={mes} /><button className="btn-primario btn-sm">Fechar faturas do mês</button></form>
+        <form action={fecharMesAction}><input type="hidden" name="mes" value={mes} /><button className="btn-primario btn-sm">Calcular faturas do mês</button></form>
       ) : null}>
         <div className="-mx-5 overflow-x-auto">
           <table className="tabela min-w-[860px]">
-            <thead><tr><th>Cliente</th><th className="text-right">Placas</th><th className="text-right">Mensalidades</th><th className="text-right">Economia comprovada</th><th className="text-right">Saving</th><th className="text-right">Conveniência</th><th className="text-right">Defesa</th><th className="text-right">Repasse franqueado</th><th>Fatura</th></tr></thead>
+            <thead><tr><th>Cliente</th><th>Fechamento</th><th className="text-right">Placas</th><th className="text-right">Mensalidades</th><th className="text-right">Economia comprovada</th><th className="text-right">Saving</th><th className="text-right">Conveniência</th><th className="text-right">Defesa</th><th className="text-right">Repasse franqueado</th><th>Fatura</th></tr></thead>
             <tbody>
               {d.previas.map((f) => {
-                const fat = d.faturas.find((x) => x.cliente_id === f.cliente.id);
+                const fats = d.faturas.filter((x) => x.cliente_id === f.cliente.id);
                 return (
                   <tr key={f.cliente.id}>
                     <td className="font-semibold">{f.cliente.nome}{f.cliente.preco_placa === null && <div className="text-xs font-normal text-rec">preço do plano [DEFINIR]</div>}</td>
+                    <td className="text-xs">{(CICLOS[f.cliente.ciclo_fechamento as Ciclo] ?? "Mensal").split(" (")[0]}<div className="text-suave">{FORMA[f.cliente.forma_cobranca] ?? ""}</div></td>
                     <td className="text-right">{f.placas}</td>
                     <td className="num text-right">{brl(f.mensalidades)}</td>
                     <td className="num text-right text-economia">{brl(f.baseSaving)}</td>
@@ -70,14 +74,34 @@ export default async function Financeiro({ searchParams }: { searchParams: Promi
                     <td className="num text-right">{brl(f.conveniencia)}</td>
                     <td className="num text-right">{brl(f.defesa)}</td>
                     <td className="num text-right font-semibold">{brl(f.splitFranqueado)}</td>
-                    <td className="text-xs">{fat ? fat.status : "prévia"}</td>
+                    <td className="text-xs">{fats.length ? `${fats.length} fatura(s)` : "prévia"}</td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
         </div>
-        <p className="mt-3 text-xs text-suave">A conveniência é cobrada no próprio Pix (com split automático); a fatura mensal cobra mensalidade, saving e defesa via Asaas.</p>
+        <p className="mt-3 text-xs text-suave">Totais do mês por cliente. Cada cliente fecha no seu ciclo (diário, semanal, quinzenal ou mensal): a mensalidade é proporcional aos dias de cada período. A conveniência é cobrada no próprio Pix; as faturas cobram mensalidade, saving e defesa.</p>
+      </Card>
+      <Card titulo={`Faturas do mês (${d.faturas.length})`} className="mt-6">
+        {d.faturas.length === 0 ? <p className="text-sm text-suave">Nenhuma fatura fechada neste mês. Elas fecham sozinhas no fim de cada período; o botão acima calcula as que já começaram.</p> : (
+          <div className="-mx-5 overflow-x-auto">
+            <table className="tabela min-w-[760px]">
+              <thead><tr><th>Cliente</th><th>Período</th><th>Vencimento</th><th>Forma</th><th className="!text-right">Placas</th><th className="!text-right">Total</th><th>Situação</th></tr></thead>
+              <tbody>{d.faturas.map((x) => (
+                <tr key={x.id}>
+                  <td className="font-semibold">{x.nome}</td>
+                  <td className="text-xs">{dataBR(x.periodo_inicio)}{x.periodo_fim !== x.periodo_inicio ? ` a ${dataBR(x.periodo_fim)}` : ""}</td>
+                  <td className="text-xs">{dataBR(x.vencimento)}</td>
+                  <td className="text-xs">{FORMA[x.forma] ?? "—"}</td>
+                  <td className="num text-right">{x.placas}</td>
+                  <td className="num text-right font-semibold">{brl(x.total)}</td>
+                  <td className="text-xs">{{ aberta: "Aberta", emitida: "Emitida", paga: "Paga", cancelada: "Cancelada" }[x.status as string] ?? x.status}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        )}
       </Card>
       <Card titulo="Pagamentos Pix do mês (conciliação)" className="mt-6">
         <div className="-mx-5 overflow-x-auto">

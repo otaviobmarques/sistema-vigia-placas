@@ -6,6 +6,7 @@ import { Vigi } from "@/components/marca";
 import { criarCliente } from "../../../actions";
 import { DadosCliente } from "@/components/dados-cliente";
 import { ehAdminSistema, franquiasAtivas } from "@/lib/acesso";
+import { CICLOS } from "@/lib/domain/ciclo";
 
 export const metadata = { title: "Novo cliente" };
 
@@ -51,7 +52,9 @@ export default async function NovoCliente({ searchParams }: { searchParams: Prom
             ) : (
               <div><div className="rotulo">Frequência de consulta</div><p className="text-sm text-suave">Conforme o plano (o Administrador do Sistema pode ajustar depois).</p></div>
             )}
-            <div><label className="rotulo">Mensalidade via</label><select name="forma_cobranca" className="campo"><option value="pix">Pix</option><option value="boleto">Boleto</option><option value="cartao">Cartão</option></select></div>
+            <div><label className="rotulo">Forma de pagamento</label><select name="forma_cobranca" className="campo"><option value="pix">Pix</option><option value="boleto">Boleto</option><option value="cartao">Cartão de crédito</option></select></div>
+            <div><label className="rotulo">Fechamento da fatura</label><select name="ciclo_fechamento" defaultValue="mensal" className="campo">{Object.entries(CICLOS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></div>
+            <div><label className="rotulo">Vencimento (dias após o fechamento)</label><input name="vencimento_dias" type="number" min={0} max={60} defaultValue={5} className="campo" /></div>
             {s.nivel === "franqueadora" && franquiasAtivas() && <div><label className="rotulo">Franqueado</label><select name="franqueadoId" className="campo"><option value="">Direto (franqueadora)</option>{d.franqueados.map((f) => <option key={f.id} value={f.id}>{f.nome}</option>)}</select></div>}
           </div>
         </Card>
@@ -62,9 +65,15 @@ export default async function NovoCliente({ searchParams }: { searchParams: Prom
         </Card>
         <Card titulo="4. Acesso do cliente (opcional)">
           <div className="grid gap-3 sm:grid-cols-2">
-            <div><label className="rotulo">Login do administrador (e-mail ou usuário)</label><input name="email_admin" autoCapitalize="none" className="campo" /></div>
-            <div><label className="rotulo">Senha provisória (mín. 10)</label><input name="senha_admin" type="password" minLength={10} autoComplete="new-password" className="campo" /></div>
+            <div><label className="rotulo">Usuário (e-mail ou nome de usuário)</label><input name="email_admin" autoCapitalize="none" className="campo" /></div>
+            <div><label className="rotulo">Senha (mín. 10)</label><input name="senha_admin" type="text" minLength={10} autoComplete="off" className="campo font-mono" /></div>
           </div>
+          {s.nivel === "franqueadora" ? (
+            <label className="mt-3 flex items-start gap-2 text-sm">
+              <input type="checkbox" name="senha_definitiva" defaultChecked className="mt-1 accent-vigia" />
+              <span>Senha definitiva <span className="block text-xs text-suave">O cliente entra com este usuário e senha sem precisar trocar. Desmarque para obrigar a troca no primeiro acesso.</span></span>
+            </label>
+          ) : <p className="mt-2 text-xs text-suave">O cliente troca a senha no primeiro acesso.</p>}
         </Card>
         <Card titulo="5. Aceite">
           <label className="flex items-start gap-3 text-sm">
