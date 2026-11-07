@@ -4,7 +4,7 @@ import { melhorValorHoje, pagavel } from "../domain/ctb";
 import { hojeISO } from "../domain/dates";
 import { brl } from "../domain/money";
 import { resumoCarrinho, type ResumoCarrinho } from "../domain/financeiro";
-import { criarCobrancaPix, garantirCliente, pagarBoleto } from "../integrations/asaas";
+import { cancelarCobranca, criarCobrancaPix, garantirCliente, pagarBoleto } from "../integrations/asaas";
 import { pagarBoletoCelcoin } from "../integrations/celcoin";
 import { enfileirar } from "../integrations/mensagens";
 import { registrarEconomia, registrarEvento, regra, SELECT_MULTA, type MultaRow } from "./multas";
@@ -43,35 +43,81 @@ export async function adicionarAoCarrinho(db: Db, clienteId: string, multaIds: s
   }
 }
 
-export async function criarPagamento(db: Db, clienteId: string, usuarioId: string) {
+const ABERTOS = "('aguardando_aprovacao','aguardando')";
+
+/**
+ * Cria o pagamento do carrinho. Acima do limite de aprovação dupla do cliente, fica aguardando
+ * a aprovação de outro usuário antes de gerar o Pix. Multa que já está num pagamento em aberto não entra de novo.
+ */
+export async function criarPagamento(db: Db, clienteId: string, usuarioId: string): Promise<{ id: string; pendenteAprovacao: boolean }> {
   const { itens, resumo } = await carrinho(db, clienteId);
   if (!itens.length) throw new Error("Carrinho vazio");
-  const c = await db.one(
-    "select c.*, f.asaas_wallet_id, f.id as fid from clientes c left join franqueados f on f.id = c.franqueado_id where c.id = $1",
-    [clienteId],
+  const emAberto = await db.q<{ placa: string }>(
+    `select distinct pl.placa from pagamento_itens pi join pagamentos p on p.id = pi.pagamento_id
+     join multas m on m.id = pi.multa_id join placas pl on pl.id = m.placa_id
+     where pi.multa_id = any($1::uuid[]) and p.status in ${ABERTOS}`,
+    [itens.map((i) => i.multa.id)],
   );
-  const customerId = await garantirCliente({ nome: c!.nome, documento: c!.documento, email: c!.email, asaasId: c!.asaas_customer_id });
-  if (!c!.asaas_customer_id) await db.q("update clientes set asaas_customer_id = $2 where id = $1", [clienteId, customerId]);
+  if (emAberto.length) throw new Error(`Já existe um pagamento em aberto para ${emAberto.map((e) => e.placa).join(", ")}. Conclua ou cancele esse pagamento antes.`);
 
+  const c = await db.one("select c.aprovacao_dupla_acima, c.franqueado_id from clientes c where c.id = $1", [clienteId]);
+  const pendenteAprovacao = c!.aprovacao_dupla_acima !== null && resumo.total > c!.aprovacao_dupla_acima;
   const ref = randomUUID();
-  const pix = await criarCobrancaPix({
-    customerId,
-    valorCentavos: resumo.total,
-    descricao: `Vigia Placa · ${itens.length} multa(s) com desconto`,
-    referencia: ref,
-    split: c!.asaas_wallet_id ? { walletId: c!.asaas_wallet_id, valorCentavos: resumo.splitFranqueado } : null,
-  });
   await db.q(
-    `insert into pagamentos (id, cliente_id, franqueado_id, asaas_id, multas_valor, taxa, total, economia, split_franqueado, pix_payload, pix_qr, criado_por)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-    [ref, clienteId, c!.fid, pix.id, resumo.multas, resumo.taxa, resumo.total, resumo.economia, resumo.splitFranqueado, pix.payload, pix.qrBase64, usuarioId],
+    `insert into pagamentos (id, cliente_id, franqueado_id, status, multas_valor, taxa, total, economia, split_franqueado, criado_por)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+    [ref, clienteId, c!.franqueado_id, pendenteAprovacao ? "aguardando_aprovacao" : "aguardando", resumo.multas, resumo.taxa, resumo.total, resumo.economia, resumo.splitFranqueado, usuarioId],
   );
   for (const i of itens) {
     await db.q("insert into pagamento_itens (pagamento_id, cliente_id, multa_id, valor_cheio, a_pagar, desconto) values ($1,$2,$3,$4,$5,$6)", [
       ref, clienteId, i.multa.id, i.valorCheio, i.aPagar, i.desconto,
     ]);
   }
-  return ref;
+  if (pendenteAprovacao) {
+    const admins = await db.q<{ email: string }>("select email from usuarios where cliente_id = $1 and ativo and perfil in ('admin','financeiro') and id <> $2", [clienteId, usuarioId]);
+    for (const a of admins) {
+      await enfileirar(db, { clienteId, canal: "email", destino: a.email, assunto: "Pagamento aguardando sua aprovação", corpo: `Um pagamento de ${brl(resumo.total)} (${itens.length} multa(s), economia de ${brl(resumo.economia)}) precisa da sua aprovação no Vigia Placa.` });
+    }
+  } else {
+    await emitirCobranca(db, ref);
+  }
+  return { id: ref, pendenteAprovacao };
+}
+
+/** Gera a cobrança Pix no Asaas (com split) para um pagamento já registrado. */
+export async function emitirCobranca(db: Db, pagamentoId: string) {
+  const pg = await db.one("select * from pagamentos where id = $1", [pagamentoId]);
+  const c = await db.one(
+    "select c.*, f.asaas_wallet_id from clientes c left join franqueados f on f.id = c.franqueado_id where c.id = $1",
+    [pg!.cliente_id],
+  );
+  const n = await db.one("select count(*) as n from pagamento_itens where pagamento_id = $1", [pagamentoId]);
+  const customerId = await garantirCliente({ nome: c!.nome, documento: c!.documento, email: c!.email, asaasId: c!.asaas_customer_id });
+  if (!c!.asaas_customer_id) await db.q("update clientes set asaas_customer_id = $2 where id = $1", [c!.id, customerId]);
+  const pix = await criarCobrancaPix({
+    customerId,
+    valorCentavos: pg!.total,
+    descricao: `Vigia Placa · ${n!.n} multa(s) com desconto`,
+    referencia: pagamentoId,
+    split: c!.asaas_wallet_id ? { walletId: c!.asaas_wallet_id, valorCentavos: pg!.split_franqueado } : null,
+  });
+  await db.q("update pagamentos set status = 'aguardando', asaas_id = $2, pix_payload = $3, pix_qr = $4 where id = $1", [pagamentoId, pix.id, pix.payload, pix.qrBase64]);
+}
+
+/** Segunda aprovação: precisa ser de um usuário diferente de quem montou o pagamento. */
+export async function aprovarPagamento(db: Db, pagamentoId: string, usuarioId: string) {
+  const pg = await db.one("select * from pagamentos where id = $1 for update", [pagamentoId]);
+  if (!pg || pg.status !== "aguardando_aprovacao") throw new Error("Este pagamento não está aguardando aprovação.");
+  if (pg.criado_por === usuarioId) throw new Error("A segunda aprovação precisa ser de outra pessoa.");
+  await db.q("update pagamentos set aprovado_por = $2, aprovado_em = now() where id = $1", [pagamentoId, usuarioId]);
+  await emitirCobranca(db, pagamentoId);
+}
+
+export async function cancelarPagamento(db: Db, pagamentoId: string) {
+  const pg = await db.one("select * from pagamentos where id = $1 for update", [pagamentoId]);
+  if (!pg || !["aguardando_aprovacao", "aguardando"].includes(pg.status)) throw new Error("Só dá para cancelar pagamentos ainda não pagos.");
+  if (pg.asaas_id) await cancelarCobranca(pg.asaas_id);
+  await db.q("update pagamentos set status = 'cancelado' where id = $1", [pagamentoId]);
 }
 
 /**

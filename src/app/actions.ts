@@ -12,7 +12,7 @@ import { hojeISO } from "@/lib/domain/dates";
 import { parseReais } from "@/lib/domain/money";
 import { GRAVIDADES, type Gravidade } from "@/lib/domain/ctb";
 import { tipoDocumento, somenteDocumento, validarPlaca, validarRenavam } from "@/lib/domain/validators";
-import { adicionarAoCarrinho, confirmarPagamento, criarPagamento } from "@/lib/services/pagamentos";
+import { adicionarAoCarrinho, aprovarPagamento, cancelarPagamento, confirmarPagamento, criarPagamento } from "@/lib/services/pagamentos";
 import { consultarPlaca, varredura } from "@/lib/services/monitoramento";
 import { indicarCondutor, aceitarIndicacao, protocolarIndicacao } from "@/lib/services/indicacao";
 import { pedirDefesa, atualizarDefesa } from "@/lib/services/defesa";
@@ -20,6 +20,7 @@ import { fecharMes } from "@/lib/services/faturamento";
 import { lerPlanilha, validarLinhas, type LinhaImport } from "@/lib/services/importacao";
 import { auditar, registrarEvento } from "@/lib/services/multas";
 import { asaasSimulado } from "@/lib/integrations/asaas";
+import { criarUsuario, niveisPermitidos, validarSenha, type Nivel, type Perfil } from "@/lib/services/usuarios";
 import { urlApp } from "@/lib/url";
 
 const s = (f: FormData, k: string) => String(f.get(k) ?? "").trim();
@@ -39,6 +40,7 @@ export async function entrar(_: unknown, f: FormData): Promise<{ erro?: string; 
   const email = s(f, "email").toLowerCase();
   const u = await sistema((db) => db.one("select * from usuarios where email = $1", [email]));
   if (!u || !(await bcrypt.compare(s(f, "senha"), u.senha_hash))) return { erro: "E-mail ou senha incorretos.", email };
+  if (u.ativo === false) return { erro: "Este acesso foi desativado. Fale com o administrador.", email };
   if (u.totp_secret) {
     const codigo = s(f, "codigo");
     if (!codigo) return { pedirCodigo: true, email };
@@ -77,10 +79,10 @@ export async function trocarSenha(f: FormData) {
   const u = await sistema((db) => db.one("select senha_hash from usuarios where id = $1", [sessao.usuarioId]));
   if (!u || !(await bcrypt.compare(s(f, "atual"), u.senha_hash))) ir("/conta", { erro: "Senha atual incorreta." });
   await sistema(async (db) => {
-    await db.q("update usuarios set senha_hash = $2 where id = $1", [sessao.usuarioId, bcrypt.hashSync(nova, 12)]);
+    await db.q("update usuarios set senha_hash = $2, trocar_senha = false where id = $1", [sessao.usuarioId, bcrypt.hashSync(nova, 12)]);
     await auditar(db, { usuarioId: sessao.usuarioId, acao: "senha_trocada", entidade: "usuario", entidadeId: sessao.usuarioId });
   });
-  ir("/conta", { ok: "Senha alterada." });
+  ir(sessao.trocarSenha ? "/" : "/conta", { ok: "Senha alterada." });
 }
 
 export async function sair() {
@@ -136,17 +138,47 @@ export async function removerCarrinho(f: FormData) {
 export async function gerarPix() {
   const sessao = await exigirCliente();
   await exigirPermissao(sessao, "pagar", "/pagamentos");
-  let id: string;
+  let r: { id: string; pendenteAprovacao: boolean };
   try {
-    id = await noEscopo(sessao, async (db) => {
-      const pid = await criarPagamento(db, sessao.clienteId, sessao.usuarioId);
-      await auditar(db, { usuarioId: sessao.usuarioId, clienteId: sessao.clienteId, acao: "pix_gerado", entidade: "pagamento", entidadeId: pid });
-      return pid;
+    r = await noEscopo(sessao, async (db) => {
+      const out = await criarPagamento(db, sessao.clienteId, sessao.usuarioId);
+      await auditar(db, { usuarioId: sessao.usuarioId, clienteId: sessao.clienteId, acao: out.pendenteAprovacao ? "pagamento_para_aprovacao" : "pix_gerado", entidade: "pagamento", entidadeId: out.id });
+      return out;
     });
   } catch (e: any) {
     ir("/pagamentos", { erro: e.message });
   }
-  redirect(`/pagamentos/${id!}`);
+  redirect(`/pagamentos/${r!.id}`);
+}
+
+export async function aprovarPagamentoAction(f: FormData) {
+  const sessao = await exigirCliente();
+  const id = s(f, "id");
+  await exigirPermissao(sessao, "pagar", `/pagamentos/${id}`);
+  try {
+    await noEscopo(sessao, async (db) => {
+      await aprovarPagamento(db, id, sessao.usuarioId);
+      await auditar(db, { usuarioId: sessao.usuarioId, clienteId: sessao.clienteId, acao: "pagamento_aprovado", entidade: "pagamento", entidadeId: id });
+    });
+  } catch (e: any) {
+    ir(`/pagamentos/${id}`, { erro: e.message });
+  }
+  ir(`/pagamentos/${id}`, { ok: "Pagamento aprovado. O Pix já pode ser pago." });
+}
+
+export async function cancelarPagamentoAction(f: FormData) {
+  const sessao = await exigirCliente();
+  const id = s(f, "id");
+  await exigirPermissao(sessao, "pagar", `/pagamentos/${id}`);
+  try {
+    await noEscopo(sessao, async (db) => {
+      await cancelarPagamento(db, id);
+      await auditar(db, { usuarioId: sessao.usuarioId, clienteId: sessao.clienteId, acao: "pagamento_cancelado", entidade: "pagamento", entidadeId: id });
+    });
+  } catch (e: any) {
+    ir(`/pagamentos/${id}`, { erro: e.message });
+  }
+  ir("/pagamentos", { ok: "Pagamento cancelado. As multas continuam no carrinho." });
 }
 
 /** Só no modo simulado: faz o papel do webhook PAYMENT_RECEIVED do Asaas. */
@@ -359,23 +391,64 @@ export async function salvarConfiguracoes(f: FormData) {
 export async function convidarUsuario(f: FormData) {
   const sessao = await exigirCliente();
   if (sessao.perfil !== "admin") ir("/configuracoes?aba=usuarios", { erro: "Só o administrador convida usuários." });
-  const email = s(f, "email").toLowerCase();
-  const senhaTemp = Math.random().toString(36).slice(2, 10);
+  let login = "";
   try {
-    await sistema((db) =>
-      db.q("insert into usuarios (email, nome, senha_hash, nivel, cliente_id, perfil) values ($1,$2,$3,'cliente',$4,$5)", [
-        email, s(f, "nome") || email, bcrypt.hashSync(senhaTemp, 10), sessao.clienteId, s(f, "perfil"),
-      ]),
+    login = await noEscopo(sessao, (db) =>
+      criarUsuario(db, { login: s(f, "email"), nome: s(f, "nome"), senha: s(f, "senha"), nivel: "cliente", perfil: s(f, "perfil") as Perfil, franqueadoId: null, clienteId: sessao.clienteId }),
     );
-    await noEscopo(sessao, (db) =>
-      db.q("insert into outbox (cliente_id, canal, destino, assunto, corpo) values ($1,'email',$2,'Convite para o Vigia Placa',$3)", [
-        sessao.clienteId, email, `Você foi convidado(a) para o Vigia Placa. Acesse ${urlApp()}/login com a senha provisória ${senhaTemp} e troque no primeiro acesso.`,
-      ]),
-    );
-  } catch {
-    ir("/configuracoes?aba=usuarios", { erro: "Já existe um usuário com este e-mail." });
+  } catch (e: any) {
+    ir("/configuracoes?aba=usuarios", { erro: e.message });
   }
-  ir("/configuracoes?aba=usuarios", { ok: `Convite enviado para ${email}.` });
+  ir("/configuracoes?aba=usuarios", { ok: `Acesso criado para ${login}. Repasse a senha provisória por um canal seguro.` });
+}
+
+// ---------------- Usuários (franqueadora e franqueado) ----------------
+
+export async function criarUsuarioAction(f: FormData) {
+  const sessao = await exigirSessao(["franqueadora", "franqueado"]);
+  if (sessao.perfil !== "admin") ir("/usuarios", { erro: "Só administradores gerenciam acessos." });
+  const nivel = s(f, "nivel") as Nivel;
+  if (!niveisPermitidos(sessao.nivel).includes(nivel)) ir("/usuarios", { erro: "Você não pode criar acessos deste nível." });
+  let login = "";
+  try {
+    login = await noEscopo(sessao, async (db) => {
+      const l = await criarUsuario(db, {
+        login: s(f, "login"), nome: s(f, "nome"), senha: s(f, "senha"), nivel, perfil: (s(f, "perfil") || "admin") as Perfil,
+        franqueadoId: sessao.nivel === "franqueado" ? sessao.franqueadoId : s(f, "franqueadoId") || null,
+        clienteId: s(f, "clienteId") || null,
+      });
+      await auditar(db, { usuarioId: sessao.usuarioId, clienteId: s(f, "clienteId") || null, acao: "usuario_criado", entidade: "usuario", dados: { login: l, nivel } });
+      return l;
+    });
+  } catch (e: any) {
+    ir("/usuarios", { erro: String(e.message).includes("row-level security") ? "Você não pode criar acessos para este vínculo." : e.message });
+  }
+  ir("/usuarios", { ok: `Acesso criado: ${login}. No primeiro login a pessoa troca a senha provisória.` });
+}
+
+export async function redefinirSenhaUsuario(f: FormData) {
+  const sessao = await exigirSessao(["franqueadora", "franqueado"]);
+  if (sessao.perfil !== "admin") ir("/usuarios", { erro: "Só administradores gerenciam acessos." });
+  const erro = validarSenha(s(f, "senha"));
+  if (erro) ir("/usuarios", { erro });
+  const r = await noEscopo(sessao, async (db) => {
+    const rows = await db.q("update usuarios set senha_hash = $2, trocar_senha = true where id = $1 and id <> $3 returning email", [s(f, "id"), bcrypt.hashSync(s(f, "senha"), 12), sessao.usuarioId]);
+    if (rows.length) await auditar(db, { usuarioId: sessao.usuarioId, acao: "senha_redefinida", entidade: "usuario", entidadeId: s(f, "id") });
+    return rows[0];
+  }).catch(() => null);
+  ir("/usuarios", r ? { ok: `Senha provisória definida para ${r.email}.` } : { erro: "Você não pode alterar este acesso." });
+}
+
+export async function alternarUsuario(f: FormData) {
+  const sessao = await exigirSessao(["franqueadora", "franqueado"]);
+  if (sessao.perfil !== "admin") ir("/usuarios", { erro: "Só administradores gerenciam acessos." });
+  const ativo = s(f, "ativo") === "1";
+  const r = await noEscopo(sessao, async (db) => {
+    const rows = await db.q("update usuarios set ativo = $2 where id = $1 and id <> $3 returning email", [s(f, "id"), ativo, sessao.usuarioId]);
+    if (rows.length) await auditar(db, { usuarioId: sessao.usuarioId, acao: ativo ? "usuario_reativado" : "usuario_desativado", entidade: "usuario", entidadeId: s(f, "id") });
+    return rows[0];
+  }).catch(() => null);
+  ir("/usuarios", r ? { ok: `${r.email} ${ativo ? "reativado" : "desativado"}.` } : { erro: "Você não pode alterar este acesso." });
 }
 
 // ---------------- Onboarding (T02) ----------------
@@ -387,6 +460,7 @@ export async function criarCliente(f: FormData) {
   if (!tipo) ir("/clientes/novo", { erro: "CPF ou CNPJ inválido." });
   if (f.get("aceite") !== "on") ir("/clientes/novo", { erro: "O aceite dos termos (com a autorização de consulta e LGPD) é obrigatório." });
   const ip = (await headers()).get("x-forwarded-for")?.split(",")[0] ?? "local";
+  const avisos: string[] = [];
   let id: string;
   try {
     id = await noEscopo(sessao, async (db) => {
@@ -407,15 +481,17 @@ export async function criarCliente(f: FormData) {
     ir("/clientes/novo", { erro: String(e.message).includes("documento") ? "Já existe um cliente com este CPF/CNPJ." : e.message });
   }
   if (s(f, "email_admin")) {
-    await sistema((db) =>
-      db.q("insert into usuarios (email, nome, senha_hash, nivel, cliente_id) values ($1,$2,$3,'cliente',$4) on conflict (email) do nothing", [
-        s(f, "email_admin").toLowerCase(), s(f, "nome"), bcrypt.hashSync(s(f, "senha_admin") || "trocar123", 10), id!,
-      ]),
-    );
+    try {
+      await noEscopo(sessao, (db) =>
+        criarUsuario(db, { login: s(f, "email_admin"), nome: s(f, "nome"), senha: s(f, "senha_admin"), nivel: "cliente", perfil: "admin", franqueadoId: null, clienteId: id! }),
+      );
+    } catch (e: any) {
+      avisos.push(`Acesso do cliente não criado: ${e.message}`);
+    }
   }
   // Placas coladas (uma por linha: PLACA;RENAVAM;UF) e primeira varredura gratuita.
   const ids: string[] = [];
-  const erros: string[] = [];
+  const erros: string[] = [...avisos];
   for (const linha of s(f, "placas").split(/\n+/).map((l) => l.trim()).filter(Boolean)) {
     const [pl, rn, uf] = linha.split(/[;,\t ]+/);
     const pv = validarPlaca(pl ?? "");
@@ -432,7 +508,7 @@ export async function criarCliente(f: FormData) {
   }
   for (const pid of ids) await sistema((db) => consultarPlaca(db, pid));
   await escolherCliente(id!);
-  redirect(`/bem-vindo${erros.length ? `?erro=${encodeURIComponent("Placas não cadastradas: " + erros.join("; "))}` : ""}`);
+  redirect(`/bem-vindo${erros.length ? `?erro=${encodeURIComponent("Atenção: " + erros.join("; "))}` : ""}`);
 }
 
 // ---------------- Captura de notificações (M11) ----------------

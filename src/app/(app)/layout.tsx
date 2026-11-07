@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { headers } from "next/headers";
+import { redirect } from "next/navigation";
 import { exigirSessao, noEscopo } from "@/lib/auth";
 import { Logo } from "@/components/marca";
 import { sair, sairCliente } from "../actions";
@@ -8,6 +10,8 @@ type Item = { href: string; rotulo: string; n?: number };
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const s = await exigirSessao();
+  const caminho = (await headers()).get("x-vp-path") ?? "";
+  if (s.trocarSenha && caminho !== "/conta") redirect("/conta?primeiro=1");
   const nCarrinho = s.clienteId
     ? Number((await noEscopo(s, (db) => db.one("select count(*) as n from carrinho_itens where cliente_id = $1", [s.clienteId])))?.n ?? 0)
     : 0;
@@ -18,6 +22,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     { href: "/placas", rotulo: "Placas" },
     { href: "/pagamentos", rotulo: "Pagamentos", n: nCarrinho || undefined },
     { href: "/extrato", rotulo: "Extrato de Economia" },
+    { href: "/relatorios", rotulo: "Relatórios" },
     { href: "/condutores", rotulo: "Condutores" },
     { href: "/enviar", rotulo: "Enviar notificação" },
     { href: "/configuracoes", rotulo: "Configurações" },
@@ -27,11 +32,13 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     { href: "/hoje?todos=1", rotulo: "Faça hoje (todos)" },
     { href: "/placas/importar", rotulo: "Importar placas" },
     { href: "/financeiro", rotulo: "Comissões e repasses" },
+    { href: "/usuarios", rotulo: "Usuários" },
   ];
   const itensFranqueadora: Item[] = [
     { href: "/backoffice", rotulo: "Backoffice" },
     { href: "/carteira", rotulo: "Clientes" },
     { href: "/financeiro", rotulo: "Financeiro" },
+    { href: "/usuarios", rotulo: "Usuários" },
   ];
 
   const secoes: Array<{ titulo?: string; itens: Item[] }> = [];

@@ -5,6 +5,8 @@ import { FREQUENCIAS, type Frequencia } from "@/lib/domain/monitoramento";
 import { Cabecalho, Card, Mensagem, Vazio } from "@/components/ui";
 import { Placa } from "@/components/marca";
 import { adicionarPlaca, alterarStatusPlaca, consultarAgora, salvarSne } from "../../actions";
+import { LeitorDocumento } from "@/components/leitor-documento";
+import { leitorAtivo } from "@/lib/integrations/leitor";
 
 export const metadata = { title: "Placas" };
 const UFS = "AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO".split(" ");
@@ -34,6 +36,7 @@ export default async function Placas({ searchParams }: { searchParams: Promise<{
 
       <Card titulo="Cadastrar placa" className="mb-6">
         <form action={adicionarPlaca} className="grid gap-3 sm:grid-cols-3 lg:grid-cols-7">
+          <div className="sm:col-span-3 lg:col-span-7"><LeitorDocumento foco="crlv" ativo={leitorAtivo()} rotulo="CRLV-e em PDF ou foto (opcional)" /></div>
           <div><label className="rotulo">Placa</label><input name="placa" required placeholder="ABC1D23" className="campo uppercase" /></div>
           <div><label className="rotulo">Renavam</label><input name="renavam" required inputMode="numeric" placeholder="11 dígitos" className="campo" /></div>
           <div><label className="rotulo">UF</label><select name="uf" className="campo" defaultValue="MG">{UFS.map((u) => <option key={u}>{u}</option>)}</select></div>

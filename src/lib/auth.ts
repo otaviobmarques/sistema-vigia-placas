@@ -30,6 +30,8 @@ export interface Sessao {
   clienteId: string | null;
   clienteNome: string | null;
   doisFatores: boolean;
+  /** Senha provisória: precisa trocar antes de usar o sistema. */
+  trocarSenha: boolean;
 }
 
 export async function criarSessao(usuarioId: string) {
@@ -60,7 +62,7 @@ export async function sessaoAtual(): Promise<Sessao | null> {
     return null;
   }
   const u = await sistema((db) => db.one("select * from usuarios where id = $1", [sub]));
-  if (!u) return null;
+  if (!u || u.ativo === false) return null;
   const escopo: Escopo = { nivel: u.nivel, franqueadoId: u.franqueado_id, clienteId: u.cliente_id };
   let clienteId: string | null = u.cliente_id;
   let clienteNome: string | null = null;
@@ -77,7 +79,7 @@ export async function sessaoAtual(): Promise<Sessao | null> {
   }
   return {
     usuarioId: u.id, nome: u.nome, email: u.email, nivel: u.nivel, perfil: u.perfil,
-    franqueadoId: u.franqueado_id, clienteProprioId: u.cliente_id, clienteId, clienteNome, doisFatores: !!u.totp_secret,
+    franqueadoId: u.franqueado_id, clienteProprioId: u.cliente_id, clienteId, clienteNome, doisFatores: !!u.totp_secret, trocarSenha: !!u.trocar_senha,
   };
 }
 

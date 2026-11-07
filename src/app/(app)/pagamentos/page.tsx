@@ -80,7 +80,7 @@ export default async function Pagamentos({ searchParams }: { searchParams: Promi
                   <tr key={p.id}>
                     <td>{new Date(p.criado_em).toLocaleDateString("pt-BR")}</td><td>{p.n}</td>
                     <td className="num text-right">{brl(p.total)}</td><td className="num text-right text-economia">{brl(p.economia)}</td>
-                    <td>{{ aguardando: "Aguardando Pix", pago: "Pix recebido", quitado: "Quitado", parcial: "Quitado em parte", cancelado: "Cancelado" }[p.status as string]}</td>
+                    <td>{{ aguardando_aprovacao: "Aguardando aprovação", aguardando: "Aguardando Pix", pago: "Pix recebido", quitado: "Quitado", parcial: "Quitado em parte", cancelado: "Cancelado" }[p.status as string]}</td>
                     <td className="text-right"><Link className="link text-sm" href={`/pagamentos/${p.id}`}>Abrir</Link></td>
                   </tr>
                 ))}

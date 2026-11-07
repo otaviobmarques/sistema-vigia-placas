@@ -4,6 +4,7 @@ import { FREQUENCIAS } from "@/lib/domain/monitoramento";
 import { Cabecalho, Card, Mensagem } from "@/components/ui";
 import { Vigi } from "@/components/marca";
 import { criarCliente } from "../../../actions";
+import { DadosCliente } from "@/components/dados-cliente";
 
 export const metadata = { title: "Novo cliente" };
 
@@ -21,16 +22,7 @@ export default async function NovoCliente({ searchParams }: { searchParams: Prom
       <Mensagem erro={sp.erro} />
       <form action={criarCliente} className="space-y-6">
         <Card titulo="1. Dados">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div><label className="rotulo">CPF ou CNPJ</label><input name="documento" required className="campo" placeholder="CNPJ numérico ou alfanumérico" /></div>
-            <div><label className="rotulo">Nome / razão social</label><input name="nome" required className="campo" /></div>
-            <div><label className="rotulo">E-mail</label><input name="email" type="email" required className="campo" /></div>
-            <div><label className="rotulo">WhatsApp</label><input name="whatsapp" required className="campo" placeholder="+55 31 9…" /></div>
-            <div className="sm:col-span-2"><label className="rotulo">Endereço</label><input name="endereco" className="campo" /></div>
-            <div><label className="rotulo">Segmento</label><select name="segmento" className="campo"><option>Frota</option><option>Lojista</option><option>Locadora</option><option>Pessoa física</option></select></div>
-            <div><label className="rotulo">Responsável financeiro</label><input name="resp_financeiro" className="campo" /></div>
-          </div>
-          <p className="mt-2 text-xs text-suave">Os dados públicos da empresa (Receita Federal) serão preenchidos automaticamente quando a consulta de CNPJ estiver ligada.</p>
+          <DadosCliente />
         </Card>
         <Card titulo="2. Plano e cobrança">
           <div className="grid gap-3 sm:grid-cols-3">
@@ -55,8 +47,8 @@ export default async function NovoCliente({ searchParams }: { searchParams: Prom
         </Card>
         <Card titulo="4. Acesso do cliente (opcional)">
           <div className="grid gap-3 sm:grid-cols-2">
-            <div><label className="rotulo">E-mail do administrador</label><input name="email_admin" type="email" className="campo" /></div>
-            <div><label className="rotulo">Senha provisória</label><input name="senha_admin" className="campo" placeholder="trocar123" /></div>
+            <div><label className="rotulo">Login do administrador (e-mail ou usuário)</label><input name="email_admin" autoCapitalize="none" className="campo" /></div>
+            <div><label className="rotulo">Senha provisória (mín. 10)</label><input name="senha_admin" type="password" minLength={10} autoComplete="new-password" className="campo" /></div>
           </div>
         </Card>
         <Card titulo="5. Aceite">

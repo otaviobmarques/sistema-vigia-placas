@@ -47,7 +47,7 @@ export default async function Backoffice({ searchParams }: { searchParams: Promi
     <>
       <Cabecalho titulo="Backoffice" sobre="Franqueadora · Vigia Placa" />
       <Mensagem ok={sp.ok} erro={sp.erro} />
-      {(modoSimulado() || asaasSimulado()) && <div className="mb-4"><Aviso tom="ambar">Modo simulado: {[modoSimulado() && "Infosimples", asaasSimulado() && "Asaas"].filter(Boolean).join(" e ")} sem chave de API. Configure no arquivo .env para usar as integrações reais.</Aviso></div>}
+      {(modoSimulado() || asaasSimulado()) && <div className="mb-4"><Aviso tom="ambar">Modo simulado: {[modoSimulado() && "Infosimples", asaasSimulado() && "Asaas"].filter(Boolean).join(" e ")} sem chave de API. Configure as variáveis de ambiente (na Vercel, em Settings › Environment Variables) para usar as integrações reais.</Aviso></div>}
       <Abas ativo={aba} itens={ABAS.map(([id, r]) => ({ id, rotulo: r, href: `?aba=${id}` }))} />
 
       {aba === "geral" && (
