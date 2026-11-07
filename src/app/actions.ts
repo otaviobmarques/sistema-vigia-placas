@@ -7,7 +7,8 @@ import { after } from "next/server";
 import { despacharOutbox } from "@/lib/services/despacho";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { criarSessao, encerrarSessao, escolherCliente, exigirCliente, exigirSessao, noEscopo, podeAgir, type Sessao } from "@/lib/auth";
+import { criarSessao, encerrarSessao, escolherCliente, exigirAdminSistema, exigirCliente, exigirSessao, noEscopo, podeAgir, type Sessao } from "@/lib/auth";
+import { ehAdminSistema, ehEquipeVigia, niveisCriaveis, perfisAtribuiveis } from "@/lib/acesso";
 import { sistema, type Db } from "@/lib/db";
 import { verificarTOTP, gerarSegredo } from "@/lib/totp";
 import { hojeISO } from "@/lib/domain/dates";
@@ -22,8 +23,9 @@ import { fecharMes } from "@/lib/services/faturamento";
 import { lerPlanilha, validarLinhas, type LinhaImport } from "@/lib/services/importacao";
 import { auditar, registrarEvento } from "@/lib/services/multas";
 import { asaasSimulado } from "@/lib/integrations/asaas";
-import { criarUsuario, niveisPermitidos, validarSenha, type Nivel, type Perfil } from "@/lib/services/usuarios";
+import { criarUsuario, validarSenha, type Nivel, type Perfil } from "@/lib/services/usuarios";
 import { urlApp } from "@/lib/url";
+import { enfileirar } from "@/lib/integrations/mensagens";
 import { lerFrequencia } from "@/lib/frequencia-form";
 import { normalizarFrequencia } from "@/lib/domain/monitoramento";
 
@@ -262,6 +264,10 @@ export async function adicionarPlaca(f: FormData) {
   const rv = validarRenavam(s(f, "renavam"));
   if (!pv.ok) ir("/placas", { erro: pv.erro });
   if (!rv.ok) ir("/placas", { erro: rv.erro });
+  if (sessao.nivel === "cliente") {
+    await solicitar(sessao, { tipo: "inclusao", placa: (pv as any).placa, renavam: (rv as any).renavam, uf: s(f, "uf").toUpperCase(), apelido: s(f, "apelido"), grupo: s(f, "grupo") });
+    ir("/placas", { ok: `Inclusão da placa ${(pv as any).placa} solicitada. Assim que a equipe Vigia Placa aprovar, ela entra no monitoramento e você recebe um aviso.` });
+  }
   let id: string;
   try {
     id = await noEscopo(sessao, (db) =>
@@ -277,10 +283,93 @@ export async function adicionarPlaca(f: FormData) {
   ir("/placas", { ok: `Placa cadastrada e consultada: ${r.total} multa(s) encontrada(s).` });
 }
 
+// ---------------- Solicitações de placa (cliente pede, equipe Vigia Placa aprova) ----------------
+
+/** Registra o pedido do cliente. Com `parar`, um pedido repetido volta para /placas com erro; sem, só é ignorado. */
+async function solicitar(sessao: Sessao, d: { tipo: "inclusao" | "remocao"; placa: string; renavam?: string; uf?: string; apelido?: string; grupo?: string; placaId?: string; motivo?: string }, parar = true) {
+  try {
+    await noEscopo(sessao, async (db) => {
+      if (d.tipo === "inclusao" && !d.placaId && (await db.one("select 1 from placas where cliente_id = $1 and placa = $2", [sessao.clienteId, d.placa]))) {
+        throw new Error(`A placa ${d.placa} já está na sua frota.`);
+      }
+      await db.q(
+        `insert into solicitacoes_placa (cliente_id, tipo, placa, renavam, uf, apelido, grupo, placa_id, motivo, solicitado_por) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        [sessao.clienteId, d.tipo, d.placa, d.renavam || null, d.uf || null, d.apelido || null, d.grupo || null, d.placaId || null, d.motivo || null, sessao.usuarioId],
+      );
+      await auditar(db, { usuarioId: sessao.usuarioId, clienteId: sessao.clienteId, acao: `solicitacao_${d.tipo}`, entidade: "placa", dados: { placa: d.placa } });
+    });
+    return true;
+  } catch (e: any) {
+    if (!parar) return false;
+    ir("/placas", { erro: String(e.message).includes("solicitacoes_placa_unica_pendente") ? `Já existe um pedido em análise para a placa ${d.placa}.` : e.message });
+  }
+  return false;
+}
+
+export async function cancelarSolicitacao(f: FormData) {
+  const sessao = await exigirCliente();
+  await exigirPermissao(sessao, "editar", "/placas");
+  await noEscopo(sessao, (db) => db.q("update solicitacoes_placa set status = 'cancelada', decidido_em = now() where id = $1 and status = 'pendente'", [s(f, "id")]));
+  ir("/placas", { ok: "Pedido cancelado." });
+}
+
+export async function aprovarSolicitacao(f: FormData) {
+  return decidirSolicitacao(f, true);
+}
+export async function recusarSolicitacao(f: FormData) {
+  return decidirSolicitacao(f, false);
+}
+
+async function decidirSolicitacao(f: FormData, aprovar: boolean) {
+  const sessao = await exigirSessao(["franqueadora", "franqueado"]);
+  if (!["admin", "gestor"].includes(sessao.perfil)) ir("/solicitacoes", { erro: "Seu perfil não aprova solicitações." });
+  const resposta = s(f, "resposta") || null;
+  let novaPlaca: string | null = null;
+  let r: any;
+  try {
+    r = await noEscopo(sessao, async (db) => {
+      const sol = await db.one("select * from solicitacoes_placa where id = $1 and status = 'pendente'", [s(f, "id")]);
+      if (!sol) throw new Error("Pedido não encontrado ou já decidido.");
+      if (aprovar) {
+        if (sol.tipo === "remocao") {
+          await db.q("update placas set status = 'pausada', motivo_pausa = $2 where id = $1", [sol.placa_id, `removida a pedido do cliente${sol.motivo ? `: ${sol.motivo}` : ""}`]);
+        } else if (sol.placa_id) {
+          await db.q("update placas set status = 'ativa', motivo_pausa = null where id = $1", [sol.placa_id]);
+        } else {
+          if (!sol.renavam) throw new Error("O pedido não tem Renavam.");
+          novaPlaca = await inserirPlaca(db, sol.cliente_id, { placa: sol.placa, renavam: sol.renavam, uf: sol.uf || "MG", apelido: sol.apelido ?? undefined, grupo: sol.grupo ?? undefined });
+        }
+      }
+      await db.q("update solicitacoes_placa set status = $2, resposta = $3, decidido_por = $4, decidido_em = now() where id = $1", [sol.id, aprovar ? "aprovada" : "recusada", resposta, sessao.usuarioId]);
+      await auditar(db, { usuarioId: sessao.usuarioId, clienteId: sol.cliente_id, acao: `solicitacao_${aprovar ? "aprovada" : "recusada"}`, entidade: "placa", dados: { placa: sol.placa, tipo: sol.tipo } });
+      return sol;
+    });
+  } catch (e: any) {
+    ir("/solicitacoes", { erro: String(e.message).includes("placas_unica_ativa") ? "Esta placa já está ativa em outro cliente." : e.message });
+  }
+  const acao = r.tipo === "remocao" ? "remoção" : "inclusão";
+  const texto = aprovar ? `Pedido de ${acao} da placa ${r.placa} aprovado.` : `Pedido de ${acao} da placa ${r.placa} não aprovado${resposta ? `: ${resposta}` : "."}`;
+  await sistema(async (db) => {
+    const c = await db.one("select email, alertas_canais from clientes where id = $1", [r.cliente_id]);
+    await enfileirar(db, { clienteId: r.cliente_id, canal: "email", destino: c?.email, assunto: texto, corpo: texto });
+    if ((c?.alertas_canais ?? []).includes("push")) await enfileirar(db, { clienteId: r.cliente_id, canal: "push", destino: r.cliente_id, assunto: "Placas", corpo: texto, url: "/placas" });
+  });
+  if (novaPlaca) await sistema((db) => consultarPlaca(db, novaPlaca!));
+  despacharDepois();
+  revalidatePath("/", "layout");
+  ir("/solicitacoes", { ok: texto });
+}
+
 export async function alterarStatusPlaca(f: FormData) {
   const sessao = await exigirCliente();
   await exigirPermissao(sessao, "editar", "/placas");
   const status = s(f, "status") === "pausada" ? "pausada" : "ativa";
+  if (sessao.nivel === "cliente") {
+    const p = await noEscopo(sessao, (db) => db.one("select id, placa, renavam, uf from placas where id = $1", [s(f, "placaId")]));
+    if (!p) ir("/placas", { erro: "Placa não encontrada." });
+    await solicitar(sessao, { tipo: status === "pausada" ? "remocao" : "inclusao", placa: p!.placa, renavam: p!.renavam, uf: p!.uf, placaId: p!.id, motivo: s(f, "motivo") });
+    ir("/placas", { ok: status === "pausada" ? `Remoção da placa ${p!.placa} solicitada. Ela continua monitorada até a aprovação.` : `Reativação da placa ${p!.placa} solicitada.` });
+  }
   try {
     await noEscopo(sessao, (db) => db.q("update placas set status = $2, motivo_pausa = $3 where id = $1", [s(f, "placaId"), status, s(f, "motivo") || null]));
   } catch {
@@ -291,6 +380,7 @@ export async function alterarStatusPlaca(f: FormData) {
 
 export async function salvarSne(f: FormData) {
   const sessao = await exigirCliente();
+  await exigirPermissao(sessao, "editar", "/placas");
   await noEscopo(sessao, (db) => db.q("update placas set sne_adesao_em = $2 where id = $1", [s(f, "placaId"), s(f, "sne") || null]));
   ir("/placas", { ok: "Adesão ao SNE atualizada." });
 }
@@ -299,6 +389,7 @@ export async function consultarAgora(f: FormData) {
   const sessao = await exigirCliente();
   const placaId = s(f, "placaId");
   const volta = s(f, "volta") || "/placas";
+  if (sessao.perfil === "leitura") ir(volta, { erro: "O perfil Visualizador não faz consultas." });
   const lim = await noEscopo(sessao, (db) =>
     db.one("select c.consultas_avulsas_usadas as usadas, p.consultas_avulsas as franquia from clientes c join planos p on p.id = c.plano_id where c.id = $1", [sessao.clienteId]),
   );
@@ -332,6 +423,15 @@ export async function validarImportacao(_: unknown, f: FormData): Promise<{ linh
 export async function importarPlacas(f: FormData) {
   const sessao = await exigirSessao();
   const linhas: LinhaImport[] = JSON.parse(s(f, "linhas") || "[]");
+  if (sessao.nivel === "cliente") {
+    await exigirPermissao(sessao, "editar", "/placas");
+    const validas = (await noEscopo(sessao, (db) => validarLinhas(db, linhas as any, sessao.clienteId))).filter((x) => !x.erros.length);
+    let n = 0;
+    for (const l of validas) {
+      if (await solicitar(sessao, { tipo: "inclusao", placa: l.placa, renavam: l.renavam, uf: l.uf, apelido: l.apelido, grupo: l.grupo }, false)) n++;
+    }
+    ir("/placas", { ok: `${n} placa(s) enviada(s) para aprovação da equipe Vigia Placa.` });
+  }
   const ids: string[] = [];
   await noEscopo(sessao, async (db) => {
     // Revalida no servidor: nunca confiar no que veio do navegador.
@@ -408,12 +508,12 @@ export async function salvarConfiguracoes(f: FormData) {
   const sessao = await exigirCliente();
   const aba = s(f, "aba");
   await exigirPermissao(sessao, "editar", `/configuracoes?aba=${aba}`);
-  if (sessao.perfil !== "admin" && sessao.nivel === "cliente") ir(`/configuracoes?aba=${aba}`, { erro: "Só o administrador altera as configurações." });
+  if (sessao.perfil !== "admin" && sessao.nivel === "cliente") ir(`/configuracoes?aba=${aba}`, { erro: "Só o Responsável altera as configurações." });
   const reais = (k: string) => (s(f, k) ? parseReais(s(f, k)) : null);
   await noEscopo(sessao, async (db) => {
     const id = sessao.clienteId;
     if (aba === "monitoramento") {
-      if (sessao.nivel !== "franqueadora") throw new Error("A frequência de consulta é definida pela franqueadora.");
+      if (!ehAdminSistema(sessao)) throw new Error("A frequência de consulta é definida pelo Administrador do Sistema.");
       await db.q("update clientes set frequencia_padrao = $2 where id = $1", [id, lerFrequencia(f, "frequencia") ?? "adaptativa"]);
       for (const k of new Set([...f.keys()].filter((k) => k.startsWith("freq_grupo:") && !k.endsWith("__dias")))) {
         await db.q("update placas set frequencia = $3 where cliente_id = $1 and coalesce(grupo,'') = $2", [id, k.slice(11), lerFrequencia(f, k)]);
@@ -444,7 +544,8 @@ export async function salvarConfiguracoes(f: FormData) {
 
 export async function convidarUsuario(f: FormData) {
   const sessao = await exigirCliente();
-  if (sessao.perfil !== "admin") ir("/configuracoes?aba=usuarios", { erro: "Só o administrador convida usuários." });
+  if (sessao.perfil !== "admin") ir("/configuracoes?aba=usuarios", { erro: "Só o Responsável convida usuários." });
+  if (!["admin", "leitura"].includes(s(f, "perfil"))) ir("/configuracoes?aba=usuarios", { erro: "Escolha Responsável ou Visualizador." });
   let login = "";
   try {
     login = await noEscopo(sessao, (db) =>
@@ -469,7 +570,7 @@ async function reagendarPlacas(db: Db, filtro: string, params: unknown[]) {
 }
 
 export async function salvarFrequenciaPlaca(f: FormData) {
-  const sessao = await exigirSessao(["franqueadora"]);
+  const sessao = await exigirAdminSistema("/placas");
   const placaId = s(f, "placaId");
   await noEscopo(sessao, async (db) => {
     await db.q("update placas set frequencia = $2 where id = $1", [placaId, lerFrequencia(f, "frequencia")]);
@@ -480,7 +581,7 @@ export async function salvarFrequenciaPlaca(f: FormData) {
 }
 
 export async function salvarRegraFontes(f: FormData) {
-  const sessao = await exigirSessao(["franqueadora"]);
+  const sessao = await exigirAdminSistema("/backoffice?aba=regras");
   const estrategia = s(f, "estrategia");
   const principal = s(f, "principal");
   if (!["principal_reserva", "por_uf", "alternar", "ambas"].includes(estrategia) || !["directdata", "infosimples"].includes(principal)) ir("/backoffice?aba=regras", { erro: "Regra inválida." });
@@ -492,7 +593,7 @@ export async function salvarRegraFontes(f: FormData) {
 }
 
 export async function salvarRegraCliente(f: FormData) {
-  const sessao = await exigirSessao(["franqueadora"]);
+  const sessao = await exigirAdminSistema("/backoffice?aba=regras");
   const clienteId = s(f, "clienteId");
   const teto = s(f, "teto") ? parseReais(s(f, "teto")) : null;
   await noEscopo(sessao, async (db) => {
@@ -505,18 +606,32 @@ export async function salvarRegraCliente(f: FormData) {
 
 // ---------------- Usuários (franqueadora e franqueado) ----------------
 
+/** Quem gerencia acessos: Administrador do Sistema, Gestor do Vigia Placa e o administrador do franqueado. */
+const gerenciaAcessos = (sessao: Sessao) => ehEquipeVigia(sessao) ? ["admin", "gestor"].includes(sessao.perfil) : sessao.perfil === "admin";
+/** O Gestor do Vigia Placa só mexe em acessos de clientes; a equipe Vigia Placa é do Administrador do Sistema. */
+async function podeAlterarAcesso(sessao: Sessao, usuarioId: string) {
+  if (!gerenciaAcessos(sessao) || usuarioId === sessao.usuarioId) return false;
+  if (ehAdminSistema(sessao) || !ehEquipeVigia(sessao)) return true;
+  const alvo = await noEscopo(sessao, (db) => db.one("select nivel from usuarios where id = $1", [usuarioId]));
+  return alvo?.nivel === "cliente";
+}
+
 export async function criarUsuarioAction(f: FormData) {
   const sessao = await exigirSessao(["franqueadora", "franqueado"]);
-  if (sessao.perfil !== "admin") ir("/usuarios", { erro: "Só administradores gerenciam acessos." });
-  const nivel = s(f, "nivel") as Nivel;
-  if (!niveisPermitidos(sessao.nivel).includes(nivel)) ir("/usuarios", { erro: "Você não pode criar acessos deste nível." });
+  if (!gerenciaAcessos(sessao)) ir("/usuarios", { erro: "Seu perfil não gerencia acessos." });
+  const [nivelTipo, perfilTipo] = s(f, "tipo").split(":");
+  const nivel = (nivelTipo || s(f, "nivel")) as Nivel;
+  if (!niveisCriaveis(sessao).includes(nivel)) ir("/usuarios", { erro: "Você não pode criar acessos deste nível." });
+  const perfil = perfilTipo || s(f, "perfil") || "admin";
+  if (nivel === "cliente" && !s(f, "clienteId")) ir("/usuarios", { erro: "Escolha o cliente deste acesso." });
+  if (!perfisAtribuiveis(sessao, nivel).includes(perfil)) ir("/usuarios", { erro: "Perfil inválido para este nível." });
   let login = "";
   try {
     login = await noEscopo(sessao, async (db) => {
       const l = await criarUsuario(db, {
-        login: s(f, "login"), nome: s(f, "nome"), senha: s(f, "senha"), nivel, perfil: (s(f, "perfil") || "admin") as Perfil,
-        franqueadoId: sessao.nivel === "franqueado" ? sessao.franqueadoId : s(f, "franqueadoId") || null,
-        clienteId: s(f, "clienteId") || null,
+        login: s(f, "login"), nome: s(f, "nome"), senha: s(f, "senha"), nivel, perfil: perfil as Perfil,
+        franqueadoId: nivel !== "franqueado" ? null : sessao.nivel === "franqueado" ? sessao.franqueadoId : s(f, "franqueadoId") || null,
+        clienteId: nivel === "cliente" ? s(f, "clienteId") || null : null,
       });
       await auditar(db, { usuarioId: sessao.usuarioId, clienteId: s(f, "clienteId") || null, acao: "usuario_criado", entidade: "usuario", dados: { login: l, nivel } });
       return l;
@@ -529,7 +644,7 @@ export async function criarUsuarioAction(f: FormData) {
 
 export async function redefinirSenhaUsuario(f: FormData) {
   const sessao = await exigirSessao(["franqueadora", "franqueado"]);
-  if (sessao.perfil !== "admin") ir("/usuarios", { erro: "Só administradores gerenciam acessos." });
+  if (!(await podeAlterarAcesso(sessao, s(f, "id")))) ir("/usuarios", { erro: "Você não pode alterar este acesso." });
   const erro = validarSenha(s(f, "senha"));
   if (erro) ir("/usuarios", { erro });
   const r = await noEscopo(sessao, async (db) => {
@@ -542,7 +657,7 @@ export async function redefinirSenhaUsuario(f: FormData) {
 
 export async function alternarUsuario(f: FormData) {
   const sessao = await exigirSessao(["franqueadora", "franqueado"]);
-  if (sessao.perfil !== "admin") ir("/usuarios", { erro: "Só administradores gerenciam acessos." });
+  if (!(await podeAlterarAcesso(sessao, s(f, "id")))) ir("/usuarios", { erro: "Você não pode alterar este acesso." });
   const ativo = s(f, "ativo") === "1";
   const r = await noEscopo(sessao, async (db) => {
     const rows = await db.q("update usuarios set ativo = $2 where id = $1 and id <> $3 returning email", [s(f, "id"), ativo, sessao.usuarioId]);
@@ -574,7 +689,7 @@ export async function criarCliente(f: FormData) {
          values ($15,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, now(), $13, $14)`,
         [franqueadoId, tipo, doc, s(f, "nome"), s(f, "segmento") || null, s(f, "email"), s(f, "whatsapp"), s(f, "endereco") || null, s(f, "resp_financeiro") || null,
          s(f, "forma_cobranca") || "pix", s(f, "plano"),
-         sessao.nivel === "franqueadora" ? lerFrequencia(f, "frequencia") ?? "adaptativa" : normalizarFrequencia((await db.one("select frequencia from planos where id = $1", [s(f, "plano")]))?.frequencia),
+         ehAdminSistema(sessao) ? lerFrequencia(f, "frequencia") ?? "adaptativa" : normalizarFrequencia((await db.one("select frequencia from planos where id = $1", [s(f, "plano")]))?.frequencia),
          ip, cfg!.termo_versao, novoId],
       );
       await auditar(db, { usuarioId: sessao.usuarioId, clienteId: novoId, acao: "cliente_criado", entidade: "cliente", entidadeId: novoId, dados: { aceite_ip: ip } });
@@ -723,13 +838,13 @@ export async function transferirCliente(f: FormData) {
 }
 
 export async function reativarFonte(f: FormData) {
-  const sessao = await exigirSessao(["franqueadora"]);
+  const sessao = await exigirAdminSistema("/backoffice?aba=fontes");
   await noEscopo(sessao, (db) => db.q("update fontes set ativa = not ativa, falhas_seguidas = 0 where id = $1", [s(f, "id")]));
   ir("/backoffice?aba=fontes", { ok: "Fonte atualizada." });
 }
 
 export async function rodarVarredura() {
-  await exigirSessao(["franqueadora"]);
+  await exigirAdminSistema("/backoffice?aba=fontes");
   const r = await sistema((db) => varredura(db));
   revalidatePath("/", "layout");
   ir("/backoffice?aba=fontes", { ok: `Varredura: ${r.placas} placa(s) consultada(s), ${r.novas} multa(s) nova(s), ${r.erros} erro(s), ${r.avisos} aviso(s) de prazo.` });
@@ -754,7 +869,7 @@ export async function atualizarDefesaAction(f: FormData) {
 // ---------------- Infosimples: teste de fonte (franqueadora) ----------------
 
 export async function testarFonteInfosimples(_: unknown, f: FormData): Promise<{ erro?: string; servico?: string; resumo?: string; multas?: Array<Record<string, unknown>>; bruto?: string }> {
-  await exigirSessao(["franqueadora"]);
+  if (!ehAdminSistema(await exigirSessao(["franqueadora"]))) return { erro: "Só o Administrador do Sistema testa as fontes de dados." };
   const { FONTES, chamarServico, interpretarResposta, montarParametros, modoSimulado } = await import("@/lib/integrations/infosimples");
   const dd = await import("@/lib/integrations/directdata");
   if (s(f, "servico") === dd.SERVICO_DIRECTDATA) {

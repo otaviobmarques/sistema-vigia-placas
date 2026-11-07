@@ -90,6 +90,13 @@ export async function exigirSessao(niveis?: Sessao["nivel"][]): Promise<Sessao> 
   return s;
 }
 
+/** Parte técnica (gateways, APIs, fontes e regras de consulta): só o Administrador do Sistema. */
+export async function exigirAdminSistema(volta = "/backoffice"): Promise<Sessao> {
+  const s = await exigirSessao(["franqueadora"]);
+  if (s.perfil !== "admin") redirect(`${volta}${volta.includes("?") ? "&" : "?"}erro=${encodeURIComponent("Só o Administrador do Sistema altera a parte técnica.")}`);
+  return s;
+}
+
 /** Exige um cliente em foco (para telas do cliente). Franqueado sem cliente escolhido vai para a carteira. */
 export async function exigirCliente(): Promise<Sessao & { clienteId: string }> {
   const s = await exigirSessao();

@@ -10,15 +10,19 @@ import { atualizarDefesaAction, reativarFonte, rodarVarredura, salvarConfigGloba
 import { ESTRATEGIAS, rotuloFrequencia, type EstrategiaFontes, type FonteDados } from "@/lib/domain/monitoramento";
 import { custoConsultaPlaca, custoMensalPlaca, fontesDisponiveis, UFS_EXEMPLO } from "@/lib/services/custos";
 import { CampoFrequencia } from "@/components/frequencia";
+import { ehAdminSistema, franquiasAtivas, rotuloPerfil } from "@/lib/acesso";
 
 export const metadata = { title: "Backoffice" };
 const ABAS = [["geral", "Visão geral"], ["franqueados", "Franqueados"], ["planos", "Planos e percentuais"], ["regras", "Regras de consulta"], ["fontes", "Fontes de dados"], ["cobertura", "Cobertura"], ["defesas", "Defesas"], ["mensagens", "Mensagens"], ["auditoria", "Auditoria"]] as const;
+const ABAS_TECNICAS: string[] = ["regras", "fontes", "cobertura"];
 const pct = (bps: number) => (bps / 100).toLocaleString("pt-BR");
 
 export default async function Backoffice({ searchParams }: { searchParams: Promise<{ aba?: string; ok?: string; erro?: string }> }) {
   const s = await exigirSessao(["franqueadora"]);
   const sp = await searchParams;
-  const aba = ABAS.some(([id]) => id === sp.aba) ? sp.aba! : "geral";
+  // Parte técnica (regras de consulta, fontes e cobertura) só para o Administrador do Sistema; franqueados escondidos.
+  const abas = ABAS.filter(([id]) => (ehAdminSistema(s) || !ABAS_TECNICAS.includes(id)) && (id !== "franqueados" || franquiasAtivas()));
+  const aba = abas.some(([id]) => id === sp.aba) ? sp.aba! : "geral";
   const mes = hojeISO().slice(0, 7);
   const d = await noEscopo(s, async (db) => ({
     totais: await db.one(`select (select count(*) from placas where status <> 'pausada') as placas, (select count(*) from clientes where ativo) as clientes,
@@ -55,10 +59,10 @@ export default async function Backoffice({ searchParams }: { searchParams: Promi
 
   return (
     <>
-      <Cabecalho titulo="Backoffice" sobre="Franqueadora · Vigia Placa" />
+      <Cabecalho titulo="Backoffice" sobre={`${rotuloPerfil(s.nivel, s.perfil)} · Vigia Placa`} />
       <Mensagem ok={sp.ok} erro={sp.erro} />
-      {(modoSimulado() || asaasSimulado()) && <div className="mb-4"><Aviso tom="ambar">Modo simulado: {[modoSimulado() && "Infosimples", asaasSimulado() && "Asaas"].filter(Boolean).join(" e ")} sem chave de API. Configure as variáveis de ambiente (na Vercel, em Settings › Environment Variables) para usar as integrações reais.</Aviso></div>}
-      <Abas ativo={aba} itens={ABAS.map(([id, r]) => ({ id, rotulo: r, href: `?aba=${id}` }))} />
+      {ehAdminSistema(s) && (modoSimulado() || asaasSimulado()) && <div className="mb-4"><Aviso tom="ambar">Modo simulado: {[modoSimulado() && "Infosimples", asaasSimulado() && "Asaas"].filter(Boolean).join(" e ")} sem chave de API. Configure as variáveis de ambiente (na Vercel, em Settings › Environment Variables) para usar as integrações reais.</Aviso></div>}
+      <Abas ativo={aba} itens={abas.map(([id, r]) => ({ id, rotulo: r, href: `?aba=${id}` }))} />
 
       {aba === "geral" && (
         <>
@@ -76,11 +80,11 @@ export default async function Backoffice({ searchParams }: { searchParams: Promi
                 ))}
               </tbody></table>
             </Card>
-            <Card titulo="Ranking de franqueados">
+            {franquiasAtivas() && <Card titulo="Ranking de franqueados">
               <table className="tabela"><thead><tr><th>Franqueado</th><th className="text-right">Placas</th><th className="text-right">Economia no mês</th></tr></thead><tbody>
                 {d.franqueados.map((f) => <tr key={f.id}><td>{f.nome}<div className="text-xs text-suave">{f.cidade}</div></td><td className="text-right">{f.placas}</td><td className="num text-right text-economia">{brl(Number(f.economia))}</td></tr>)}
               </tbody></table>
-            </Card>
+            </Card>}
           </div>
         </>
       )}

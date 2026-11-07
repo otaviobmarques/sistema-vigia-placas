@@ -29,6 +29,16 @@ Abra http://localhost:3000. Sem `DATABASE_URL`, o sistema sobe com **Postgres em
 
 Testes das regras de negócio: `npm test` · checagem de tipos: `npm run typecheck`.
 
+## Perfis de acesso
+| Perfil | O que faz |
+|---|---|
+| **Administrador do Sistema** (equipe Vigia Placa) | Tudo, inclusive a parte técnica: gateways de pagamento, APIs, fontes de dados, regras e tempo de consulta, cobertura e varredura manual. Único que cria a equipe Vigia Placa. |
+| **Gestor do Vigia Placa** (equipe Vigia Placa) | Clientes, placas, planos e preços, financeiro, defesas, mensagens, auditoria e aprovação das **solicitações de placas**. Gerencia os acessos dos clientes. Sem a parte técnica. |
+| **Cliente Responsável** | Vê e age nas próprias placas e multas (paga, indica condutor, pede defesa) e **solicita** inclusão, remoção ou reativação de placas. A equipe aprova em *Solicitações de placas*. |
+| **Cliente Visualizador** | Só vê. |
+
+O nível **franqueado** fica escondido enquanto `VIGIA_FRANQUIAS` não for `1` (o código e o banco continuam prontos). Regras em `src/lib/acesso.ts`; o isolamento entre clientes é do banco (RLS).
+
 ## Site de vendas
 Visitantes sem login veem o site de vendas em `/` (`src/components/site/`); quem está logado vai direto para o sistema. Preço por placa, % de saving, frase, itens e plano em destaque vêm da tabela `planos` e são editados em **Backoffice › Planos e percentuais**. O mesmo % de saving vale na fatura dos clientes do plano (plano sem % usa o saving padrão). O simulador de economia é ilustrativo e mostra as premissas. Contato comercial: `SITE_WHATSAPP` (só dígitos, com DDI) ou `SITE_EMAIL`. As telas em `public/site/` são capturas do sistema com os dados fictícios do seed. Site desenvolvido pela Agência RedBox.
 
