@@ -19,7 +19,6 @@ export default async function Extrato({ searchParams }: { searchParams: Promise<
     total: await db.one("select coalesce(sum(valor),0) as v, min(mes) as desde from economias where cliente_id = $1 and comprovada", [s.clienteId]),
     meses: await db.q<{ mes: string }>("select distinct mes from economias where cliente_id = $1 order by mes desc", [s.clienteId]),
     fatura: await calcularFatura(db, s.clienteId, mes),
-    cfg: await db.one("select saving_bps from configuracao"),
   }));
   const comprovadas = d.linhas.filter((l) => l.comprovada);
   const estimadas = d.linhas.filter((l) => !l.comprovada);
@@ -81,7 +80,7 @@ export default async function Extrato({ searchParams }: { searchParams: Promise<
       <Card titulo="Como fica a sua fatura deste mês" className="mt-6">
         <dl className="space-y-1.5 text-sm">
           <div className="flex justify-between"><dt className="text-suave">Mensalidade ({f.placas} placas)</dt><dd className="num">{brl(f.mensalidades)}</dd></div>
-          <div className="flex justify-between"><dt className="text-suave">Saving: {(d.cfg!.saving_bps / 100).toLocaleString("pt-BR")}% × {brl(f.baseSaving)} comprovados{f.tetoAplicado ? " (teto aplicado)" : ""}</dt><dd className="num">{brl(f.saving)}</dd></div>
+          <div className="flex justify-between"><dt className="text-suave">Saving: {(f.savingBps / 100).toLocaleString("pt-BR")}% × {brl(f.baseSaving)} comprovados{f.tetoAplicado ? " (teto aplicado)" : ""}</dt><dd className="num">{brl(f.saving)}</dd></div>
           {f.defesa > 0 && <div className="flex justify-between"><dt className="text-suave">Defesas contratadas</dt><dd className="num">{brl(f.defesa)}</dd></div>}
           <div className="flex justify-between border-t border-borda pt-1.5 font-semibold"><dt>Total previsto</dt><dd className="num">{brl(f.total)}</dd></div>
           {roi !== null && <div className="flex justify-between font-semibold text-economia"><dt>Para cada R$ 1 pago, você economizou</dt><dd className="num">{brl(Math.round(roi * 100))}</dd></div>}

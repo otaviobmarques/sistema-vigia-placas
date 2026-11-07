@@ -19,7 +19,7 @@ export default async function Configuracoes({ searchParams }: { searchParams: Pr
   const sp = await searchParams;
   const aba = ABAS.some(([id]) => id === sp.aba) ? sp.aba! : "monitoramento";
   const d = await noEscopo(s, async (db) => ({
-    c: await db.one("select c.*, pl.nome as plano_nome, pl.preco_placa, pl.inclui, pl.consultas_avulsas from clientes c join planos pl on pl.id = c.plano_id where c.id = $1", [s.clienteId]),
+    c: await db.one("select c.*, pl.nome as plano_nome, pl.preco_placa, pl.saving_bps as plano_saving_bps, pl.inclui, pl.consultas_avulsas from clientes c join planos pl on pl.id = c.plano_id where c.id = $1", [s.clienteId]),
     grupos: await db.q("select coalesce(grupo,'') as grupo, count(*) as n, max(frequencia) as frequencia from placas where cliente_id = $1 and status <> 'pausada' group by 1 order by 1", [s.clienteId]),
     usuarios: await db.q("select nome, email, perfil, totp_secret is not null as dois from usuarios where cliente_id = $1 order by nome", [s.clienteId]),
     faturas: await db.q("select * from faturas where cliente_id = $1 order by mes desc limit 12", [s.clienteId]),
@@ -147,7 +147,7 @@ export default async function Configuracoes({ searchParams }: { searchParams: Pr
             <div className="grid gap-3 sm:grid-cols-3">
               <div className="rounded-xl border border-borda p-4"><div className="text-xs text-suave">Plano</div><div className="text-xl font-extrabold">{c.plano_nome}</div><div className="text-xs text-suave">{c.inclui}</div></div>
               <div className="rounded-xl border border-borda p-4"><div className="text-xs text-suave">Preço por placa/mês</div><div className="num text-xl font-extrabold">{c.preco_placa ? brl(c.preco_placa) : "[DEFINIR]"}</div></div>
-              <div className="rounded-xl border border-borda p-4"><div className="text-xs text-suave">Saving vigente</div><div className="num text-xl font-extrabold">{d.cfg!.saving_bps / 100}%</div><div className="text-xs text-suave">sobre a economia comprovada{c.saving_teto ? ` · teto ${brl(c.saving_teto)}` : ""}</div></div>
+              <div className="rounded-xl border border-borda p-4"><div className="text-xs text-suave">Saving vigente</div><div className="num text-xl font-extrabold">{(c.plano_saving_bps ?? d.cfg!.saving_bps) / 100}%</div><div className="text-xs text-suave">sobre a economia comprovada{c.saving_teto ? ` · teto ${brl(c.saving_teto)}` : ""}</div></div>
             </div>
             <table className="tabela">
               <thead><tr><th>Mês</th><th className="text-right">Mensalidades</th><th className="text-right">Saving</th><th className="text-right">Defesa</th><th className="text-right">Total</th><th>Status</th></tr></thead>

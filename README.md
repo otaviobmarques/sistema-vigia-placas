@@ -29,6 +29,9 @@ Abra http://localhost:3000. Sem `DATABASE_URL`, o sistema sobe com **Postgres em
 
 Testes das regras de negócio: `npm test` · checagem de tipos: `npm run typecheck`.
 
+## Site de vendas
+Visitantes sem login veem o site de vendas em `/` (`src/components/site/`); quem está logado vai direto para o sistema. Preço por placa, % de saving, frase, itens e plano em destaque vêm da tabela `planos` e são editados em **Backoffice › Planos e percentuais**. O mesmo % de saving vale na fatura dos clientes do plano (plano sem % usa o saving padrão). O simulador de economia é ilustrativo e mostra as premissas. Contato comercial: `SITE_WHATSAPP` (só dígitos, com DDI) ou `SITE_EMAIL`. As telas em `public/site/` são capturas do sistema com os dados fictícios do seed. Site desenvolvido pela Agência RedBox.
+
 ## O que está pronto
 
 | Módulo da especificação | Onde |

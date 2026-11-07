@@ -681,9 +681,16 @@ export async function salvarConfigGlobal(f: FormData) {
       Math.round(Number(s(f, "saving").replace(",", ".")) * 100), s(f, "taxa_tipo"),
       s(f, "taxa_tipo") === "fixa" ? parseReais(s(f, "taxa_valor")) : Math.round(Number(s(f, "taxa_valor").replace(",", ".")) * 100), parseReais(s(f, "preco_defesa")),
     ]);
-    for (const id of ["essencial", "profissional", "frota"]) {
+    const planos = await db.q<{ id: string }>("select id from planos");
+    for (const { id } of planos) {
       const v = s(f, `preco_${id}`);
-      await db.q("update planos set preco_placa = $2 where id = $1", [id, v ? parseReais(v) : null]);
+      const sv = s(f, `saving_${id}`).replace(",", ".");
+      const bps = sv === "" ? null : Math.round(Number(sv) * 100);
+      if (bps !== null && !(bps >= 0 && bps <= 10000)) throw new Error(`Saving do plano ${id} deve ficar entre 0% e 100%.`);
+      const itens = s(f, `itens_${id}`).split(/\r?\n/).map((l) => l.trim()).filter(Boolean).join("\n");
+      await db.q("update planos set preco_placa = $2, saving_bps = $3, frase_site = $4, itens_site = $5, destaque_site = $6 where id = $1", [
+        id, v ? parseReais(v) : null, bps, s(f, `frase_${id}`).trim(), itens, s(f, "destaque") === id,
+      ]);
     }
     await auditar(db, { usuarioId: sessao.usuarioId, acao: "config_global", entidade: "configuracao" });
   });
