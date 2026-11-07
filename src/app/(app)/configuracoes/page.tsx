@@ -20,7 +20,7 @@ export default async function Configuracoes({ searchParams }: { searchParams: Pr
   const sp = await searchParams;
   const aba = ABAS.some(([id]) => id === sp.aba) ? sp.aba! : "monitoramento";
   const d = await noEscopo(s, async (db) => ({
-    c: await db.one("select c.*, pl.nome as plano_nome, pl.preco_placa, pl.saving_bps as plano_saving_bps, pl.inclui, pl.consultas_avulsas from clientes c join planos pl on pl.id = c.plano_id where c.id = $1", [s.clienteId]),
+    c: await db.one("select c.*, pl.nome as plano_nome, coalesce(c.preco_placa_personalizado, pl.preco_placa) as preco_placa, coalesce(c.saving_bps_personalizado, pl.saving_bps) as plano_saving_bps, pl.inclui, pl.consultas_avulsas from clientes c join planos pl on pl.id = c.plano_id where c.id = $1", [s.clienteId]),
     grupos: await db.q("select coalesce(grupo,'') as grupo, count(*) as n, max(frequencia) as frequencia from placas where cliente_id = $1 and status <> 'pausada' group by 1 order by 1", [s.clienteId]),
     usuarios: await db.q("select nome, email, perfil, totp_secret is not null as dois from usuarios where cliente_id = $1 order by nome", [s.clienteId]),
     faturas: await db.q("select * from faturas where cliente_id = $1 order by mes desc limit 12", [s.clienteId]),

@@ -35,6 +35,16 @@ export default async function NovoCliente({ searchParams }: { searchParams: Prom
               </label>
             ))}
           </div>
+          {s.nivel === "franqueadora" && (
+            <details className="mt-3 rounded-xl border border-dashed border-borda p-4 open:border-vigia">
+              <summary className="cursor-pointer text-sm font-semibold">Plano personalizado: negociar outro preço para este cliente</summary>
+              <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                <div><label className="rotulo">Preço por placa/mês (R$)</label><input name="preco_personalizado" inputMode="decimal" placeholder="ex.: 7,50" className="campo" /></div>
+                <div><label className="rotulo">Saving sobre a economia (%)</label><input name="saving_personalizado" inputMode="decimal" placeholder="ex.: 18" className="campo" /></div>
+                <p className="self-end text-xs text-suave">Deixe em branco para usar o valor do plano escolhido acima. Os recursos e a frequência continuam os do plano.</p>
+              </div>
+            </details>
+          )}
           <div className="mt-3 grid gap-3 sm:grid-cols-3">
             {ehAdminSistema(s) ? (
               <div className="sm:col-span-3"><label className="rotulo">Frequência de consulta</label><CampoFrequencia nome="frequencia" valor="adaptativa" /></div>
@@ -46,7 +56,7 @@ export default async function NovoCliente({ searchParams }: { searchParams: Prom
           </div>
         </Card>
         <Card titulo="3. Placas (opcional)">
-          <label className="rotulo">Uma por linha: PLACA;RENAVAM;UF</label>
+          <label className="rotulo">Uma por linha: PLACA;RENAVAM;UF. Para muitas placas, use depois <a href="/placas/importar" className="link">Importar planilha</a> (com modelo pronto).</label>
           <textarea name="placas" rows={4} className="campo font-mono" placeholder={"ABC1D23;01234567897;MG"} />
           <p className="mt-1 text-xs text-suave">Muitas placas? Depois de criar o cliente, use Importar planilha.</p>
         </Card>

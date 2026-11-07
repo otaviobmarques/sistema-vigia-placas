@@ -1,4 +1,4 @@
-import { exigirSessao, noEscopo } from "@/lib/auth";
+import { exigirAdminSistema, noEscopo } from "@/lib/auth";
 import { hojeISO } from "@/lib/domain/dates";
 import { brl } from "@/lib/domain/money";
 import { FONTES, modoSimulado, UFS_EXIGEM_LOGIN } from "@/lib/integrations/infosimples";
@@ -18,7 +18,7 @@ const ABAS_TECNICAS: string[] = ["regras", "fontes", "cobertura"];
 const pct = (bps: number) => (bps / 100).toLocaleString("pt-BR");
 
 export default async function Backoffice({ searchParams }: { searchParams: Promise<{ aba?: string; ok?: string; erro?: string }> }) {
-  const s = await exigirSessao(["franqueadora"]);
+  const s = await exigirAdminSistema("/carteira");
   const sp = await searchParams;
   // Parte técnica (regras de consulta, fontes e cobertura) só para o Administrador do Sistema; franqueados escondidos.
   const abas = ABAS.filter(([id]) => (ehAdminSistema(s) || !ABAS_TECNICAS.includes(id)) && (id !== "franqueados" || franquiasAtivas()));
@@ -31,7 +31,7 @@ export default async function Backoffice({ searchParams }: { searchParams: Promi
       (select coalesce(sum(valor),0) from economias where comprovada and mes = $1) as economia_mes,
       (select coalesce(sum(taxa),0) from pagamentos where to_char(pago_em,'YYYY-MM') = $1) as conveniencia,
       (select coalesce(sum(preco),0) from pedidos_defesa where to_char(criado_em,'YYYY-MM') = $1) as defesa,
-      (select coalesce(sum(pl.preco_placa),0) from placas p join clientes c on c.id = p.cliente_id join planos pl on pl.id = c.plano_id where p.status <> 'pausada') as mensalidades`, [mes]),
+      (select coalesce(sum(coalesce(c.preco_placa_personalizado, pl.preco_placa)),0) from placas p join clientes c on c.id = p.cliente_id join planos pl on pl.id = c.plano_id where p.status <> 'pausada') as mensalidades`, [mes]),
     cfg: await db.one("select * from configuracao"),
     planos: await db.q("select * from planos order by preco_placa nulls last"),
     franqueados: await db.q(`select f.*, (select count(*) from clientes c where c.franqueado_id = f.id) as clientes,

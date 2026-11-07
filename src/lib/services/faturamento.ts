@@ -5,7 +5,7 @@ import { percentual } from "../domain/money";
 /** Fecha o mês de um cliente: mensalidades + saving (sobre economia comprovada) + conveniência + defesa. */
 export async function calcularFatura(db: Db, clienteId: string, mes: string) {
   const c = await db.one(
-    `select c.*, pl.preco_placa, pl.saving_bps as plano_saving_bps, f.repasse_mensalidade_bps, f.repasse_saving_bps, f.repasse_conveniencia_bps, f.comissao_defesa_bps
+    `select c.*, coalesce(c.preco_placa_personalizado, pl.preco_placa) as preco_placa, pl.saving_bps as plano_saving_bps, f.repasse_mensalidade_bps, f.repasse_saving_bps, f.repasse_conveniencia_bps, f.comissao_defesa_bps
      from clientes c join planos pl on pl.id = c.plano_id left join franqueados f on f.id = c.franqueado_id where c.id = $1`,
     [clienteId],
   );
@@ -13,7 +13,7 @@ export async function calcularFatura(db: Db, clienteId: string, mes: string) {
   const cfg = await db.one("select * from configuracao");
   const placas = Number((await db.one("select count(*) as n from placas where cliente_id = $1 and status <> 'pausada'", [clienteId]))!.n);
   const linhas = await db.q("select tipo, valor, comprovada from economias where cliente_id = $1 and mes = $2", [clienteId, mes]);
-  const savingBps: number = c.plano_saving_bps ?? cfg!.saving_bps;
+  const savingBps: number = c.saving_bps_personalizado ?? c.plano_saving_bps ?? cfg!.saving_bps;
   const s = calcularSaving(linhas as any, savingBps, c.repasse_saving_bps ?? 0, c.saving_teto);
   const conv = await db.one(
     "select coalesce(sum(taxa),0) as taxa, coalesce(sum(split_franqueado),0) as split from pagamentos where cliente_id = $1 and to_char(pago_em, 'YYYY-MM') = $2",

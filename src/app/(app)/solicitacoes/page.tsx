@@ -12,7 +12,7 @@ export default async function Solicitacoes({ searchParams }: { searchParams: Pro
   const sp = await searchParams;
   const d = await noEscopo(s, async (db) => ({
     pendentes: await db.q(
-      `select sp.*, c.nome as cliente, c.documento, u.nome as solicitante, pl.nome as plano, pl.preco_placa,
+      `select sp.*, c.nome as cliente, c.documento, u.nome as solicitante, pl.nome as plano, coalesce(c.preco_placa_personalizado, pl.preco_placa) as preco_placa,
          (select count(*) from placas p where p.cliente_id = sp.cliente_id and p.status <> 'pausada') as placas_ativas
        from solicitacoes_placa sp join clientes c on c.id = sp.cliente_id join planos pl on pl.id = c.plano_id
        left join usuarios u on u.id = sp.solicitado_por
