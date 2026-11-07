@@ -41,8 +41,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     { href: "/usuarios", rotulo: "Usuários" },
   ];
   const itensFranqueadora: Item[] = [
-    { href: "/backoffice", rotulo: "Backoffice" },
+    { href: "/painel", rotulo: "Painel" },
+    ...(s.perfil === "admin" ? [{ href: "/backoffice", rotulo: "Backoffice" }] : []),
     { href: "/carteira", rotulo: "Clientes" },
+    { href: "/placas/importar", rotulo: "Importar placas" },
     { href: "/solicitacoes", rotulo: "Solicitações de placas", n: nSolicitacoes || undefined },
     { href: "/financeiro", rotulo: "Financeiro" },
     { href: "/usuarios", rotulo: "Usuários" },
