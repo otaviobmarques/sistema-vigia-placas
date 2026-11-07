@@ -24,6 +24,8 @@ import { auditar, registrarEvento } from "@/lib/services/multas";
 import { asaasSimulado } from "@/lib/integrations/asaas";
 import { criarUsuario, niveisPermitidos, validarSenha, type Nivel, type Perfil } from "@/lib/services/usuarios";
 import { urlApp } from "@/lib/url";
+import { lerFrequencia } from "@/lib/frequencia-form";
+import { normalizarFrequencia } from "@/lib/domain/monitoramento";
 
 const s = (f: FormData, k: string) => String(f.get(k) ?? "").trim();
 /** Envia as notificações push da fila logo depois de responder ao usuário. */
@@ -411,8 +413,12 @@ export async function salvarConfiguracoes(f: FormData) {
   await noEscopo(sessao, async (db) => {
     const id = sessao.clienteId;
     if (aba === "monitoramento") {
-      await db.q("update clientes set frequencia_padrao = $2 where id = $1", [id, s(f, "frequencia")]);
-      for (const [k, v] of f.entries()) if (k.startsWith("freq_grupo:")) await db.q("update placas set frequencia = nullif($3,'') where cliente_id = $1 and coalesce(grupo,'') = $2", [id, k.slice(11), String(v)]);
+      if (sessao.nivel !== "franqueadora") throw new Error("A frequência de consulta é definida pela franqueadora.");
+      await db.q("update clientes set frequencia_padrao = $2 where id = $1", [id, lerFrequencia(f, "frequencia") ?? "adaptativa"]);
+      for (const k of new Set([...f.keys()].filter((k) => k.startsWith("freq_grupo:") && !k.endsWith("__dias")))) {
+        await db.q("update placas set frequencia = $3 where cliente_id = $1 and coalesce(grupo,'') = $2", [id, k.slice(11), lerFrequencia(f, k)]);
+      }
+      await reagendarPlacas(db, "cliente_id = $1", [id]);
     }
     if (aba === "alertas") {
       const ant = s(f, "antecedencias").split(/[,\s]+/).map(Number).filter((n) => n > 0 && n <= 60);
@@ -448,6 +454,53 @@ export async function convidarUsuario(f: FormData) {
     ir("/configuracoes?aba=usuarios", { erro: e.message });
   }
   ir("/configuracoes?aba=usuarios", { ok: `Acesso criado para ${login}. Repasse a senha provisória por um canal seguro.` });
+}
+
+// ---------------- Regra de consulta (franqueadora) ----------------
+
+/** Recalcula a próxima consulta das placas a partir da última feita, com a frequência nova (não dispara consulta extra). */
+async function reagendarPlacas(db: Db, filtro: string, params: unknown[]) {
+  await db.q(
+    `update placas p set proxima_verificacao = coalesce(p.ultima_verificacao::date, current_date) +
+       (case when coalesce(p.frequencia, c.frequencia_padrao) ~ '^[0-9]+$' then coalesce(p.frequencia, c.frequencia_padrao)::int else 7 end)
+     from clientes c where c.id = p.cliente_id and p.status <> 'pausada' and ${filtro.replace(/cliente_id/g, "p.cliente_id").replace(/\bid =/g, "p.id =")}`,
+    params,
+  );
+}
+
+export async function salvarFrequenciaPlaca(f: FormData) {
+  const sessao = await exigirSessao(["franqueadora"]);
+  const placaId = s(f, "placaId");
+  await noEscopo(sessao, async (db) => {
+    await db.q("update placas set frequencia = $2 where id = $1", [placaId, lerFrequencia(f, "frequencia")]);
+    await reagendarPlacas(db, "id = $1", [placaId]);
+    await auditar(db, { usuarioId: sessao.usuarioId, acao: "frequencia_placa", entidade: "placa", entidadeId: placaId, dados: { frequencia: lerFrequencia(f, "frequencia") } });
+  });
+  ir("/placas", { ok: "Frequência da placa atualizada." });
+}
+
+export async function salvarRegraFontes(f: FormData) {
+  const sessao = await exigirSessao(["franqueadora"]);
+  const estrategia = s(f, "estrategia");
+  const principal = s(f, "principal");
+  if (!["principal_reserva", "por_uf", "alternar", "ambas"].includes(estrategia) || !["directdata", "infosimples"].includes(principal)) ir("/backoffice?aba=regras", { erro: "Regra inválida." });
+  await noEscopo(sessao, async (db) => {
+    await db.q("update configuracao set estrategia_fontes = $1, fonte_principal = $2 where id = 1", [estrategia, principal]);
+    await auditar(db, { usuarioId: sessao.usuarioId, acao: "regra_fontes", entidade: "configuracao", dados: { estrategia, principal } });
+  });
+  ir("/backoffice?aba=regras", { ok: "Regra de fontes salva. Vale a partir da próxima consulta." });
+}
+
+export async function salvarRegraCliente(f: FormData) {
+  const sessao = await exigirSessao(["franqueadora"]);
+  const clienteId = s(f, "clienteId");
+  const teto = s(f, "teto") ? parseReais(s(f, "teto")) : null;
+  await noEscopo(sessao, async (db) => {
+    await db.q("update clientes set frequencia_padrao = $2, teto_dados_mensal = $3 where id = $1", [clienteId, lerFrequencia(f, "frequencia") ?? "adaptativa", teto]);
+    await reagendarPlacas(db, "cliente_id = $1", [clienteId]);
+    await auditar(db, { usuarioId: sessao.usuarioId, clienteId, acao: "regra_cliente", entidade: "cliente", entidadeId: clienteId, dados: { frequencia: lerFrequencia(f, "frequencia"), teto } });
+  });
+  ir("/backoffice?aba=regras", { ok: "Frequência e teto do cliente salvos." });
 }
 
 // ---------------- Usuários (franqueadora e franqueado) ----------------
@@ -520,7 +573,9 @@ export async function criarCliente(f: FormData) {
         `insert into clientes (id, franqueado_id, tipo, documento, nome, segmento, email, whatsapp, endereco, resp_financeiro, forma_cobranca, plano_id, frequencia_padrao, aceite_em, aceite_ip, aceite_versao)
          values ($15,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, now(), $13, $14)`,
         [franqueadoId, tipo, doc, s(f, "nome"), s(f, "segmento") || null, s(f, "email"), s(f, "whatsapp"), s(f, "endereco") || null, s(f, "resp_financeiro") || null,
-         s(f, "forma_cobranca") || "pix", s(f, "plano"), s(f, "frequencia") || "adaptativa", ip, cfg!.termo_versao, novoId],
+         s(f, "forma_cobranca") || "pix", s(f, "plano"),
+         sessao.nivel === "franqueadora" ? lerFrequencia(f, "frequencia") ?? "adaptativa" : normalizarFrequencia((await db.one("select frequencia from planos where id = $1", [s(f, "plano")]))?.frequencia),
+         ip, cfg!.termo_versao, novoId],
       );
       await auditar(db, { usuarioId: sessao.usuarioId, clienteId: novoId, acao: "cliente_criado", entidade: "cliente", entidadeId: novoId, dados: { aceite_ip: ip } });
       return novoId;

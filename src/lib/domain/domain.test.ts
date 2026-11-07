@@ -5,7 +5,7 @@ import { gerarRenavam, validarCNPJ, validarCPF, validarPlaca, validarRenavam } f
 import { elegivel40, limitePontos, notificacaoForaDoPrazo, valoresMulta, type MultaRegra } from "./ctb";
 import { acoesDaMulta, ordenarAcoes, recomendacao } from "./acoes";
 import { calcularSaving, resumoCarrinho } from "./financeiro";
-import { avisoDevido, intervaloDias } from "./monitoramento";
+import { avisoDevido, consultasPorMes, custoPorConsulta, escolherFontes, intervaloDias, normalizarFrequencia, rotuloFrequencia } from "./monitoramento";
 
 const base: MultaRegra = {
   valor: 13016,
@@ -177,5 +177,35 @@ describe("condutores (M13)", () => {
   });
   it("toxicológico só para categorias C, D e E", () => {
     expect([exigeToxicologico("B"), exigeToxicologico("D"), exigeToxicologico("AE")]).toEqual([false, true, true]);
+  });
+});
+
+describe("regra de consulta", () => {
+  it("frequência em dias, adaptativa e valores antigos", () => {
+    expect([normalizarFrequencia("semanal"), normalizarFrequencia("20"), normalizarFrequencia("99"), normalizarFrequencia("adaptativa")]).toEqual(["7", "20", "adaptativa", "adaptativa"]);
+    expect(intervaloDias("20", { ultimaMultaEm: null, proximoPrazo: null }, "2026-11-07")).toBe(20);
+    expect(rotuloFrequencia("20")).toBe("A cada 20 dias");
+    expect(rotuloFrequencia("quinzenal")).toBe("Quinzenal");
+    expect(consultasPorMes("15")).toBe(2);
+  });
+  const base = { principal: "directdata" as const, disponiveis: ["directdata", "infosimples"] as ("directdata" | "infosimples")[], infosimplesCobreUf: true, ultimaFonte: null };
+  it("principal com reserva: uma fonte só", () => {
+    expect(escolherFontes({ ...base, estrategia: "principal_reserva" })).toEqual({ primeiras: ["directdata"], reserva: "infosimples" });
+  });
+  it("por estado: Infosimples onde tem Detran sem login, Direct Data no resto", () => {
+    expect(escolherFontes({ ...base, estrategia: "por_uf" }).primeiras).toEqual(["infosimples"]);
+    expect(escolherFontes({ ...base, estrategia: "por_uf", infosimplesCobreUf: false }).primeiras).toEqual(["directdata"]);
+  });
+  it("alternar revezando a última", () => {
+    expect(escolherFontes({ ...base, estrategia: "alternar", ultimaFonte: "directdata" }).primeiras).toEqual(["infosimples"]);
+    expect(escolherFontes({ ...base, estrategia: "alternar", ultimaFonte: "infosimples" }).primeiras).toEqual(["directdata"]);
+  });
+  it("fonte indisponível cai para a outra, sem reserva", () => {
+    expect(escolherFontes({ ...base, estrategia: "principal_reserva", disponiveis: ["infosimples"] })).toEqual({ primeiras: ["infosimples"], reserva: null });
+  });
+  it("custo: só as as duas fontes juntas somam", () => {
+    const custos = { directdata: 36, infosimples: 52 };
+    expect(custoPorConsulta(escolherFontes({ ...base, estrategia: "principal_reserva" }), custos)).toBe(36);
+    expect(custoPorConsulta(escolherFontes({ ...base, estrategia: "ambas" }), custos)).toBe(88);
   });
 });

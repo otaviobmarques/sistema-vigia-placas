@@ -1,6 +1,6 @@
 import { exigirSessao, noEscopo } from "@/lib/auth";
 import { brl } from "@/lib/domain/money";
-import { FREQUENCIAS } from "@/lib/domain/monitoramento";
+import { CampoFrequencia } from "@/components/frequencia";
 import { Cabecalho, Card, Mensagem } from "@/components/ui";
 import { Vigi } from "@/components/marca";
 import { criarCliente } from "../../../actions";
@@ -35,7 +35,11 @@ export default async function NovoCliente({ searchParams }: { searchParams: Prom
             ))}
           </div>
           <div className="mt-3 grid gap-3 sm:grid-cols-3">
-            <div><label className="rotulo">Frequência padrão</label><select name="frequencia" defaultValue="adaptativa" className="campo">{Object.entries(FREQUENCIAS).map(([k, f]) => <option key={k} value={k}>{f.rotulo}</option>)}</select></div>
+            {s.nivel === "franqueadora" ? (
+              <div className="sm:col-span-3"><label className="rotulo">Frequência de consulta</label><CampoFrequencia nome="frequencia" valor="adaptativa" /></div>
+            ) : (
+              <div><div className="rotulo">Frequência de consulta</div><p className="text-sm text-suave">Conforme o plano (definida pela franqueadora).</p></div>
+            )}
             <div><label className="rotulo">Mensalidade via</label><select name="forma_cobranca" className="campo"><option value="pix">Pix</option><option value="boleto">Boleto</option><option value="cartao">Cartão</option></select></div>
             {s.nivel === "franqueadora" && <div><label className="rotulo">Franqueado</label><select name="franqueadoId" className="campo"><option value="">Direto (franqueadora)</option>{d.franqueados.map((f) => <option key={f.id} value={f.id}>{f.nome}</option>)}</select></div>}
           </div>

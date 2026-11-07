@@ -1,5 +1,5 @@
 import type { Db } from "../db";
-import { consultarMultas, erroDeConta, FONTES } from "../integrations/infosimples";
+import { consultarMultas, erroDeConta, FONTES, fontesParaUf } from "../integrations/infosimples";
 import { consultarDirectData, directDataAtiva, SERVICO_DIRECTDATA } from "../integrations/directdata";
 
 function nomeFonte(servico: string) {
@@ -9,7 +9,7 @@ function nomeFonte(servico: string) {
 }
 import { enfileirar } from "../integrations/mensagens";
 import { despacharOutbox } from "./despacho";
-import { avisoDevido, proximaConsulta, type Frequencia } from "../domain/monitoramento";
+import { avisoDevido, emRisco, escolherFontes, proximaConsulta, type EstrategiaFontes, type FonteDados, type Frequencia } from "../domain/monitoramento";
 import { hojeISO, dataBR, diasEntre, somarDias } from "../domain/dates";
 import { melhorValorHoje, prazoIndicacao, valoresMulta } from "../domain/ctb";
 import { brl } from "../domain/money";
@@ -24,20 +24,35 @@ export async function consultarPlaca(db: Db, placaId: string, opts: { avulsa?: b
     [placaId],
   );
   if (!p) throw new Error("Placa não encontrada");
-  // Fontes: Infosimples (por serviço) e Direct Data (Radar Serpro, nacional). Uma desligada não impede a outra.
+  // Regra de consulta (backoffice › Regras de consulta): qual fonte consultar e quando usar a reserva.
+  const cfg = await db.one<{ estrategia_fontes: EstrategiaFontes; fonte_principal: FonteDados }>("select estrategia_fontes, fonte_principal from configuracao where id = 1");
   const infosimplesLigada = !!(await db.one("select 1 from fontes where id = 'infosimples' and ativa"));
   const ddRow = await db.one<{ ativa: boolean }>("select ativa from fontes where id = 'directdata'");
   const directLigada = directDataAtiva() && (ddRow?.ativa ?? true);
-  if (!infosimplesLigada && !directLigada) throw new Error("Nenhuma fonte de dados ativa no backoffice");
+  const disponiveis: FonteDados[] = [...(directLigada ? (["directdata"] as const) : []), ...(infosimplesLigada ? (["infosimples"] as const) : [])];
+  if (!disponiveis.length) throw new Error("Nenhuma fonte de dados ativa no backoffice");
+  const escolha = escolherFontes({
+    estrategia: cfg?.estrategia_fontes ?? "principal_reserva",
+    principal: cfg?.fonte_principal ?? "directdata",
+    disponiveis,
+    infosimplesCobreUf: fontesParaUf(p.uf).length > 1,
+    ultimaFonte: (p.ultima_fonte as FonteDados | null) ?? null,
+  });
 
   // Cada serviço da Infosimples é uma fonte própria: erro em sequência desliga só aquele serviço.
   const desligadas = new Set(
     (await db.q<{ id: string }>("select id from fontes where id like 'infosimples:%' and not ativa")).map((f) => f.id.slice("infosimples:".length)),
   );
-  const [ri, dd] = await Promise.all([
-    infosimplesLigada ? consultarMultas(p.placa, p.renavam, p.uf, { documento: p.documento, desligadas }) : null,
-    directLigada ? consultarDirectData(p.placa, p.renavam) : null,
-  ]);
+  const consultar = (f: FonteDados) =>
+    f === "directdata" ? consultarDirectData(p.placa, p.renavam).then((d) => ({ fonte: f, detalhes: [d], simulado: false }))
+      : consultarMultas(p.placa, p.renavam, p.uf, { documento: p.documento, desligadas }).then((r) => ({ fonte: f, detalhes: r.detalhes, simulado: r.simulado }));
+  let rodadas = await Promise.all(escolha.primeiras.map(consultar));
+  const algumaOk = (rs: typeof rodadas) => rs.some((x) => x.detalhes.some((d) => d.ok));
+  if (!algumaOk(rodadas) && escolha.reserva) rodadas = [...rodadas, await consultar(escolha.reserva)];
+  const fonteUsada = rodadas.find((x) => x.detalhes.some((d) => d.ok))?.fonte ?? null;
+  if (fonteUsada) await db.q("update placas set ultima_fonte = $2 where id = $1", [p.id, fonteUsada]);
+  const ri = { simulado: rodadas.some((x) => x.simulado), detalhes: rodadas.filter((x) => x.fonte === "infosimples").flatMap((x) => x.detalhes) };
+  const dd = rodadas.find((x) => x.fonte === "directdata")?.detalhes[0] ?? null;
   const detalhes = [...(ri?.detalhes ?? []), ...(dd ? [dd] : [])];
   const r = {
     ok: detalhes.some((d) => d.ok),
@@ -153,9 +168,32 @@ export async function varredura(db: Db, limite = 200) {
      order by proxima_verificacao nulls first limit $2`,
     [hoje, limite],
   );
-  let novas = 0, erros = 0;
+  let novas = 0, erros = 0, adiadas = 0;
+  const gastoMes = new Map<string, { gasto: number; teto: number | null }>();
   for (const p of devidas) {
+    // Teto de gasto do cliente: atingido, a placa só é consultada se estiver em período de risco; senão fica para daqui a 7 dias.
+    const info = await db.one("select pl.cliente_id, c.teto_dados_mensal from placas pl join clientes c on c.id = pl.cliente_id where pl.id = $1", [p.id]);
+    if (info?.teto_dados_mensal) {
+      if (!gastoMes.has(info.cliente_id)) {
+        const g = await db.one("select coalesce(sum(custo),0) as v from consultas where cliente_id = $1 and data >= date_trunc('month', now())", [info.cliente_id]);
+        gastoMes.set(info.cliente_id, { gasto: Number(g?.v ?? 0), teto: info.teto_dados_mensal });
+      }
+      const g = gastoMes.get(info.cliente_id)!;
+      if (g.teto !== null && g.gasto >= g.teto) {
+        const sit = await db.one("select max(data_infracao) as ultima, min(least(vencimento, notificada_em + 30)) as prazo from multas where placa_id = $1 and estado not in ('paga','cancelada')", [p.id]);
+        if (!emRisco({ ultimaMultaEm: sit?.ultima ?? null, proximoPrazo: sit?.prazo ?? null }, hoje)) {
+          await db.q("update placas set proxima_verificacao = $2 where id = $1", [p.id, somarDias(hoje, 7)]);
+          adiadas++;
+          continue;
+        }
+      }
+    }
+    const antes = Number((await db.one("select coalesce(sum(custo),0) as v from consultas where placa_id = $1", [p.id]))?.v ?? 0);
     const r = await consultarPlaca(db, p.id);
+    if (info?.teto_dados_mensal && gastoMes.has(info.cliente_id)) {
+      const depois = Number((await db.one("select coalesce(sum(custo),0) as v from consultas where placa_id = $1", [p.id]))?.v ?? 0);
+      gastoMes.get(info.cliente_id)!.gasto += depois - antes;
+    }
     novas += r.novas;
     if (!r.ok) erros++;
   }
@@ -166,7 +204,7 @@ export async function varredura(db: Db, limite = 200) {
   );
   const avisos = await dispararAvisos(db);
   const despacho = await despacharOutbox(db);
-  return { placas: devidas.length, novas, erros, avisos, push: despacho.enviados };
+  return { placas: devidas.length, novas, erros, adiadas, avisos, push: despacho.enviados };
 }
 
 export async function dispararAvisos(db: Db) {
