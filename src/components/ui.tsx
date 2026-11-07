@@ -81,7 +81,7 @@ export function Aviso({ tom = "info", children }: { tom?: "info" | "economia" | 
 
 export function Abas({ itens, ativo }: { itens: Array<{ id: string; rotulo: string; href: string; n?: number }>; ativo: string }) {
   return (
-    <div className="mb-4 flex gap-1 overflow-x-auto border-b border-borda">
+    <div className="mb-4 flex gap-1 overflow-x-auto border-b border-borda [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
       {itens.map((a) => (
         <Link
           key={a.id}
