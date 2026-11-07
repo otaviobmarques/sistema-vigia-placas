@@ -116,11 +116,21 @@ export default async function Backoffice({ searchParams }: { searchParams: Promi
 
       {aba === "planos" && (
         <Card>
-          <form action={salvarConfigGlobal} className="grid max-w-3xl gap-4 sm:grid-cols-3">
+          <form action={salvarConfigGlobal} className="grid gap-4 sm:grid-cols-3">
+            <p className="text-sm text-suave sm:col-span-3">Preço, saving e textos de cada plano aparecem no site de vendas (<a href="/" target="_blank" className="link">ver site</a>) e valem na fatura dos clientes do plano.</p>
             {d.planos.map((p) => (
-              <div key={p.id}><label className="rotulo">{p.nome} ({p.frequencia}) · R$/placa/mês</label><input name={`preco_${p.id}`} defaultValue={p.preco_placa ? (p.preco_placa / 100).toFixed(2).replace(".", ",") : ""} placeholder="[DEFINIR]" className="campo" /></div>
+              <fieldset key={p.id} className="space-y-3 rounded-2xl border border-borda p-4">
+                <legend className="px-1 font-display font-extrabold">{p.nome} <span className="text-xs font-normal text-suave">· {rotuloFrequencia(p.frequencia).replace(/ \(.*\)$/, "")}</span></legend>
+                <div className="grid grid-cols-2 gap-2">
+                  <div><label className="rotulo">R$/placa/mês</label><input name={`preco_${p.id}`} defaultValue={p.preco_placa ? (p.preco_placa / 100).toFixed(2).replace(".", ",") : ""} placeholder="[DEFINIR]" className="campo" /></div>
+                  <div><label className="rotulo">Saving %</label><input name={`saving_${p.id}`} defaultValue={p.saving_bps === null || p.saving_bps === undefined ? "" : pct(p.saving_bps)} placeholder={`padrão ${pct(d.cfg!.saving_bps)}`} className="campo" /></div>
+                </div>
+                <div><label className="rotulo">Frase no site</label><input name={`frase_${p.id}`} defaultValue={p.frase_site ?? ""} className="campo" /></div>
+                <div><label className="rotulo">Itens no site (um por linha)</label><textarea name={`itens_${p.id}`} defaultValue={p.itens_site ?? ""} rows={5} className="campo text-xs" /></div>
+                <label className="flex items-center gap-2 text-sm"><input type="radio" name="destaque" value={p.id} defaultChecked={!!p.destaque_site} className="accent-vigia" />Destacar como &quot;Mais escolhido&quot;</label>
+              </fieldset>
             ))}
-            <div><label className="rotulo">Saving (% da economia comprovada)</label><input name="saving" defaultValue={pct(d.cfg!.saving_bps)} className="campo" /></div>
+            <div><label className="rotulo">Saving padrão (planos sem % próprio)</label><input name="saving" defaultValue={pct(d.cfg!.saving_bps)} className="campo" /></div>
             <div><label className="rotulo">Taxa de conveniência</label><select name="taxa_tipo" defaultValue={d.cfg!.taxa_conv_tipo} className="campo"><option value="fixa">Valor fixo (R$)</option><option value="percentual">Percentual (%)</option></select></div>
             <div><label className="rotulo">Valor da taxa</label><input name="taxa_valor" defaultValue={d.cfg!.taxa_conv_tipo === "fixa" ? (d.cfg!.taxa_conv_valor / 100).toFixed(2).replace(".", ",") : pct(d.cfg!.taxa_conv_valor)} className="campo" /></div>
             <div><label className="rotulo">Preço da defesa (R$)</label><input name="preco_defesa" defaultValue={(d.cfg!.preco_defesa / 100).toFixed(2).replace(".", ",")} className="campo" /></div>
