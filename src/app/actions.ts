@@ -679,3 +679,31 @@ export async function atualizarDefesaAction(f: FormData) {
   revalidatePath("/", "layout");
   ir("/backoffice?aba=defesas", { ok: "Pedido de defesa atualizado." });
 }
+
+// ---------------- Infosimples: teste de fonte (franqueadora) ----------------
+
+export async function testarFonteInfosimples(_: unknown, f: FormData): Promise<{ erro?: string; servico?: string; resumo?: string; multas?: Array<Record<string, unknown>>; bruto?: string }> {
+  await exigirSessao(["franqueadora"]);
+  const { FONTES, chamarServico, interpretarResposta, montarParametros, modoSimulado } = await import("@/lib/integrations/infosimples");
+  if (modoSimulado()) return { erro: "Sem INFOSIMPLES_TOKEN: configure o token na Vercel para testar as fontes reais." };
+  const fonte = FONTES.find((x) => x.servico === s(f, "servico"));
+  if (!fonte) return { erro: "Escolha uma fonte." };
+  const pv = validarPlaca(s(f, "placa"));
+  const rv = validarRenavam(s(f, "renavam"));
+  if (fonte.parametros.includes("placa") && !pv.ok) return { erro: pv.erro };
+  if (fonte.parametros.includes("renavam") && !rv.ok) return { erro: (rv as any).erro };
+  try {
+    const params = montarParametros(fonte, { placa: (pv as any).placa ?? "", renavam: (rv as any).renavam ?? "", documento: somenteDocumento(s(f, "documento")) || null });
+    const { json } = await chamarServico(fonte.servico, params);
+    const r = interpretarResposta(fonte, json);
+    const bruto = JSON.stringify({ ...json, site_receipts: json?.site_receipts ? "[omitido]" : undefined }, null, 2);
+    return {
+      servico: fonte.servico,
+      resumo: r.ok ? `OK (código ${r.codigo}) · ${r.multas.length} multa(s) reconhecida(s) · custo R$ ${(r.custo / 100).toFixed(2).replace(".", ",")}` : `Erro: ${r.erro}`,
+      multas: r.multas.map((m) => ({ auto: m.autoInfracao, orgao: m.orgaoNome, descricao: m.descricao, valor: (m.valor / 100).toFixed(2), data: m.dataInfracao, vencimento: m.vencimento, pontos: m.pontos })),
+      bruto: bruto.length > 20000 ? bruto.slice(0, 20000) + "\n… (cortado)" : bruto,
+    };
+  } catch (e: any) {
+    return { erro: `Falha ao chamar a Infosimples: ${e.message}` };
+  }
+}

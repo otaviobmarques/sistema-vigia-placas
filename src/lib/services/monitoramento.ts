@@ -1,5 +1,5 @@
 import type { Db } from "../db";
-import { consultarMultas } from "../integrations/infosimples";
+import { consultarMultas, erroDeConta, FONTES } from "../integrations/infosimples";
 import { enfileirar } from "../integrations/mensagens";
 import { avisoDevido, proximaConsulta, type Frequencia } from "../domain/monitoramento";
 import { hojeISO, dataBR, diasEntre, somarDias } from "../domain/dates";
@@ -11,31 +11,46 @@ const LIMITE_FALHAS = 5;
 
 export async function consultarPlaca(db: Db, placaId: string, opts: { avulsa?: boolean } = {}) {
   const p = await db.one(
-    `select p.*, c.frequencia_padrao, c.nome as cliente_nome, c.whatsapp, c.email, c.alertas_canais, c.pagamento_auto, c.pagamento_auto_ate, c.tipo
+    `select p.*, c.frequencia_padrao, c.nome as cliente_nome, c.whatsapp, c.email, c.alertas_canais, c.pagamento_auto, c.pagamento_auto_ate, c.tipo, c.documento
      from placas p join clientes c on c.id = p.cliente_id where p.id = $1`,
     [placaId],
   );
   if (!p) throw new Error("Placa não encontrada");
-  const fonte = await db.one("select * from fontes where ativa order by prioridade limit 1");
-  if (!fonte) throw new Error("Nenhuma fonte de dados ativa");
+  const fonte = await db.one("select * from fontes where id = 'infosimples' and ativa");
+  if (!fonte) throw new Error("Fonte Infosimples desligada no backoffice");
 
-  const r = await consultarMultas(p.placa, p.renavam, p.uf);
-  await db.q(
-    "insert into consultas (placa_id, cliente_id, fonte_id, custo, resultado, multas_encontradas, erro, avulsa) values ($1,$2,$3,$4,$5,$6,$7,$8)",
-    [p.id, p.cliente_id, fonte.id, r.custo || fonte.custo, r.ok ? "ok" : "erro", r.multas.length, r.erro ?? null, !!opts.avulsa],
+  // Cada serviço da Infosimples é uma fonte própria: erro em sequência desliga só aquele serviço.
+  const desligadas = new Set(
+    (await db.q<{ id: string }>("select id from fontes where id like 'infosimples:%' and not ativa")).map((f) => f.id.slice("infosimples:".length)),
   );
-  if (!r.ok) {
-    // Desligamento automático de fonte com erro em sequência.
+  const r = await consultarMultas(p.placa, p.renavam, p.uf, { documento: p.documento, desligadas });
+  for (const d of r.detalhes) {
+    const fid = d.servico === "simulado" ? "infosimples" : `infosimples:${d.servico}`;
+    const info = FONTES.find((x) => x.servico === d.servico);
+    if (fid !== "infosimples") {
+      await db.q("insert into fontes (id, nome, ativa, prioridade, custo) values ($1,$2,true,1,$3) on conflict (id) do nothing", [
+        fid, `Infosimples · ${info?.nome ?? d.servico}`, Math.round(((info?.extra ?? 0) + 0.2) * 100),
+      ]);
+    }
     await db.q(
-      `update fontes set falhas_seguidas = falhas_seguidas + 1, ultima_falha = $2,
-         ativa = (falhas_seguidas + 1) < $3, desligada_em = case when (falhas_seguidas + 1) >= $3 then now() else desligada_em end
-       where id = $1`,
-      [fonte.id, r.erro, LIMITE_FALHAS],
+      "insert into consultas (placa_id, cliente_id, fonte_id, custo, resultado, multas_encontradas, erro, avulsa) values ($1,$2,$3,$4,$5,$6,$7,$8)",
+      [p.id, p.cliente_id, fid, d.custo, d.ok ? "ok" : "erro", d.multas.length, d.erro ?? null, !!opts.avulsa],
     );
+    if (d.ok) await db.q("update fontes set falhas_seguidas = 0 where id = $1", [fid]);
+    else if (erroDeConta(d)) await db.q("update fontes set ultima_falha = $2 where id = $1", [fid, `Conta Infosimples: ${d.erro}`]);
+    else {
+      await db.q(
+        `update fontes set falhas_seguidas = falhas_seguidas + 1, ultima_falha = $2,
+           ativa = (falhas_seguidas + 1) < $3, desligada_em = case when (falhas_seguidas + 1) >= $3 then now() else desligada_em end
+         where id = $1`,
+        [fid, d.erro, LIMITE_FALHAS],
+      );
+    }
+  }
+  if (!r.ok) {
     if (p.status === "aguardando") await db.q("update placas set status = 'erro' where id = $1", [p.id]);
     return { ok: false, novas: 0, total: 0, erro: r.erro };
   }
-  await db.q("update fontes set falhas_seguidas = 0 where id = $1", [fonte.id]);
 
   let novas = 0;
   for (const m of r.multas) {
