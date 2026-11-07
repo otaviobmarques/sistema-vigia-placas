@@ -8,6 +8,7 @@ import { cancelarCobranca, criarCobrancaPix, garantirCliente, pagarBoleto } from
 import { pagarBoletoCelcoin } from "../integrations/celcoin";
 import { enfileirar } from "../integrations/mensagens";
 import { registrarEconomia, registrarEvento, regra, SELECT_MULTA, type MultaRow } from "./multas";
+import { precosDoCliente } from "./precos";
 
 export interface ItemCalc {
   multa: MultaRow;
@@ -24,11 +25,10 @@ export async function carrinho(db: Db, clienteId: string): Promise<{ itens: Item
     const melhor = melhorValorHoje(regra(m), hoje);
     return { multa: m, valorCheio: m.valor, aPagar: melhor.valor, desconto: melhor.desconto, precisaReconhecer: melhor.desconto === "40" && m.estado !== "reconhecida_sne" };
   });
-  const cfg = await db.one("select * from configuracao");
   const fr = await db.one("select f.repasse_conveniencia_bps from clientes c left join franqueados f on f.id = c.franqueado_id where c.id = $1", [clienteId]);
   const resumo = resumoCarrinho(
     itens.map((i) => ({ multaId: i.multa.id, valorCheio: i.valorCheio, aPagar: i.aPagar })),
-    { tipo: cfg!.taxa_conv_tipo, valor: cfg!.taxa_conv_valor },
+    (await precosDoCliente(db, clienteId)).taxa,
     fr?.repasse_conveniencia_bps ?? 0,
   );
   return { itens, resumo };

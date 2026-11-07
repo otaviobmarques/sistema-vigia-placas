@@ -4,6 +4,7 @@ import { CATEGORIAS_CNH, exigeToxicologico } from "@/lib/domain/condutores";
 import { dataBR } from "@/lib/domain/dates";
 import { Cabecalho, Card, Mensagem, Numero, Vazio } from "@/components/ui";
 import { adicionarCondutor, atualizarCondutor } from "../../actions";
+import { PodeDirigir } from "@/components/condutor";
 
 export const metadata = { title: "Condutores" };
 
@@ -28,6 +29,8 @@ function Campos({ c }: { c?: Record<string, any> }) {
       <div><label className="rotulo">E-mail</label><input name="email" type="email" defaultValue={c?.email ?? ""} className="campo" /></div>
       <div><label className="rotulo">Pontos já na CNH (fora daqui)</label><input name="pontos_12m" type="number" min={0} max={99} defaultValue={c?.pontos_12m ?? 0} className="campo" /></div>
       <div><label className="rotulo">…dos quais gravíssimas</label><input name="gravissimas_12m" type="number" min={0} max={20} defaultValue={c?.gravissimas_12m ?? 0} className="campo" /></div>
+      <label className="flex items-center gap-2 self-end pb-2 text-sm lg:col-span-2"><input type="checkbox" name="impedido" defaultChecked={!!c?.impedido} className="accent-rec" /> Impedido de dirigir</label>
+      <div className="lg:col-span-4"><label className="rotulo">Motivo do impedimento</label><input name="motivo_impedimento" defaultValue={c?.motivo_impedimento ?? ""} placeholder="ex.: CNH suspensa, afastado, aguardando exame" className="campo" /></div>
     </>
   );
 }
@@ -37,8 +40,8 @@ export default async function Condutores({ searchParams }: { searchParams: Promi
   const sp = await searchParams;
   const { condutores, placas } = await noEscopo(s, async (db) => ({
     condutores: await listarCondutores(db, s.clienteId),
-    placas: await db.q<{ id: string; placa: string; apelido: string | null; condutor_principal_id: string | null }>(
-      "select id, placa, apelido, condutor_principal_id from placas where cliente_id = $1 and status <> 'pausada' order by placa", [s.clienteId]),
+    placas: await db.q<{ id: string; placa: string; apelido: string | null; condutores: string[] }>(
+      "select p.id, p.placa, p.apelido, coalesce((select array_agg(pc.condutor_id::text) from placa_condutores pc where pc.placa_id = p.id), '{}') as condutores from placas p where p.cliente_id = $1 and p.status <> 'pausada' order by p.placa", [s.clienteId]),
   }));
   const ativos = condutores.filter((c) => c.ativo);
   const emRisco = ativos.filter((c) => c.situacao.nivel === "critico" || c.situacao.nivel === "suspensao").length;
@@ -69,6 +72,7 @@ export default async function Condutores({ searchParams }: { searchParams: Promi
                       <div className="font-semibold">{c.nome}{!c.ativo && " (inativo)"}</div>
                       <div className="text-xs text-suave">CNH {c.cnh ?? "—"}{c.cnh_categoria ? ` · cat. ${c.cnh_categoria}` : ""} · {c.indicacoes} indicação(ões){c.placas.length ? ` · ${c.placas.join(", ")}` : ""}</div>
                       <div className="mt-1 flex flex-wrap gap-1">
+                        <PodeDirigir pode={c.pode} />
                         <Validade dias={st.cnhDias} data={c.cnh_validade} rotulo="CNH" />
                         {exigeToxicologico(c.cnh_categoria) && <Validade dias={st.toxicologicoDias} data={c.toxicologico_validade} rotulo="Toxicológico" masculino />}
                       </div>
@@ -88,11 +92,11 @@ export default async function Condutores({ searchParams }: { searchParams: Promi
                       <input type="hidden" name="id" value={c.id} />
                       <Campos c={c} />
                       <div className="sm:col-span-2 lg:col-span-6">
-                        <div className="rotulo">Condutor principal das placas</div>
+                        <div className="rotulo">Placas que este condutor dirige</div>
                         <div className="flex flex-wrap gap-2">
                           {placas.map((p) => (
                             <label key={p.id} className="inline-flex items-center gap-1.5 rounded-lg border border-borda px-2 py-1 text-xs">
-                              <input type="checkbox" name="placas" value={p.id} defaultChecked={p.condutor_principal_id === c.id} className="accent-vigia" />
+                              <input type="checkbox" name="placas" value={p.id} defaultChecked={p.condutores.includes(c.id)} className="accent-vigia" />
                               {p.placa}{p.apelido ? ` · ${p.apelido}` : ""}
                             </label>
                           ))}
@@ -112,6 +116,14 @@ export default async function Condutores({ searchParams }: { searchParams: Promi
       <Card titulo="Novo condutor">
         <form action={adicionarCondutor} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
           <Campos />
+          {placas.length > 0 && (
+            <div className="sm:col-span-2 lg:col-span-6">
+              <div className="rotulo">Placas que dirige</div>
+              <div className="flex flex-wrap gap-2">{placas.map((p) => (
+                <label key={p.id} className="inline-flex items-center gap-1.5 rounded-lg border border-borda px-2 py-1 text-xs"><input type="checkbox" name="placas" value={p.id} className="accent-vigia" />{p.placa}{p.apelido ? ` · ${p.apelido}` : ""}</label>
+              ))}</div>
+            </div>
+          )}
           <div className="flex items-end lg:col-span-2"><button className="btn-primario w-full">Cadastrar</button></div>
         </form>
         <p className="mt-2 text-xs text-suave">LGPD: sua empresa é a controladora dos dados dos condutores; o Vigia Placa é operador. Avisamos por e-mail e WhatsApp 30, 15, 7 e 1 dia antes de a CNH ou o toxicológico vencerem.</p>

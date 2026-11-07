@@ -5,6 +5,7 @@ import { brl } from "@/lib/domain/money";
 import { rotuloPerfil } from "@/lib/acesso";
 import { Cabecalho, Card, Numero, Vazio } from "@/components/ui";
 import { GraficoBarras } from "@/components/grafico-barras";
+import { rankingCondutores } from "@/lib/services/relatorios-gestao";
 
 export const metadata = { title: "Dashboard" };
 
@@ -61,6 +62,7 @@ export default async function Painel({ searchParams }: { searchParams: Promise<{
        from unnest($1::text[]) as m(mes) order by m.mes`,
       [meses],
     ),
+    ranking: await rankingCondutores(db, {}, 5),
     fontes: await db.q(
       `select f.nome, count(q.id) as consultas, count(*) filter (where q.resultado = 'erro') as erros, coalesce(sum(q.custo),0) as custo
        from consultas q join fontes f on f.id = q.fonte_id where to_char(q.data,'YYYY-MM') = $1 group by f.nome order by custo desc`,
@@ -142,6 +144,20 @@ export default async function Painel({ searchParams }: { searchParams: Promise<{
           </div>
         )}
         <p className="mt-3 text-xs text-suave">Prévia do mês corrente: mensalidade = placas ativas × preço do cliente (personalizado ou do plano); saving = % sobre a economia já comprovada no mês. A fatura fechada fica em Financeiro.</p>
+      </Card>
+
+      <Card titulo="Condutores com mais multas (12 meses)" className="mb-6" acoes={<Link href="/gestao/relatorios?tipo=ranking" className="link text-sm">Ranking completo</Link>}>
+        {d.ranking.length === 0 ? <Vazio>Nenhuma multa indicada a condutores ainda.</Vazio> : (
+          <ol className="divide-y divide-borda">
+            {d.ranking.map((r: any) => (
+              <li key={`${r.condutor}-${r.cliente}`} className="flex items-center gap-3 py-2.5">
+                <span className={`num flex h-8 w-8 shrink-0 items-center justify-center rounded-full font-extrabold ${r.posicao === 1 ? "bg-rec text-white" : "bg-nevoa text-vigia"}`}>{r.posicao}</span>
+                <div className="min-w-0 flex-1"><div className="truncate font-semibold">{r.condutor}</div><div className="truncate text-xs text-suave">{r.cliente}</div></div>
+                <div className="text-right text-sm"><b className="num">{r.indicadas}</b> multa(s) · <span className="num">{r.pontos}</span> pts<div className="text-xs text-suave">{brl(r.valor)}{r.nas_placas ? ` · ${r.nas_placas} nas placas que dirige` : ""}</div></div>
+              </li>
+            ))}
+          </ol>
+        )}
       </Card>
 
       <Card titulo="Custo por fonte de dados no mês">

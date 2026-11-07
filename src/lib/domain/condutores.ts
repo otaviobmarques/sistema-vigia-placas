@@ -47,3 +47,20 @@ export function simularIndicacao(s: SituacaoCondutor, pontosMulta: number, gravi
 export const CATEGORIAS_CNH = ["A", "B", "AB", "C", "D", "E", "AC", "AD", "AE"];
 /** Categorias que exigem exame toxicológico periódico (Lei 13.103/2015). */
 export const exigeToxicologico = (cat: string | null) => !!cat && /[CDE]/.test(cat);
+
+/**
+ * Pode dirigir? Não pode se estiver inativo, impedido manualmente (CNH suspensa/cassada, afastamento),
+ * com a CNH vencida ou com os pontos no limite do art. 261.
+ */
+export function podeDirigir(c: { ativo: boolean; impedido?: boolean | null; motivo_impedimento?: string | null; cnh_categoria?: string | null }, s: SituacaoCondutor): { pode: boolean; motivos: string[] } {
+  const motivos: string[] = [];
+  if (!c.ativo) motivos.push("condutor inativo");
+  if (c.impedido) motivos.push(c.motivo_impedimento ? `impedido: ${c.motivo_impedimento}` : "impedido pela empresa");
+  if (s.cnhDias !== null && s.cnhDias < 0) motivos.push("CNH vencida");
+  if (s.cnhDias === null) motivos.push("validade da CNH não informada");
+  if (s.nivel === "suspensao") motivos.push("atingiu o limite de pontos");
+  // Categorias C, D e E: dirigir com o toxicológico vencido é infração (CTB art. 165-B).
+  if (exigeToxicologico(c.cnh_categoria ?? null) && s.toxicologicoDias !== null && s.toxicologicoDias < 0) motivos.push("exame toxicológico vencido");
+  // Sem validade informada é um alerta, não um impedimento.
+  return { pode: motivos.filter((m) => m !== "validade da CNH não informada").length === 0, motivos };
+}

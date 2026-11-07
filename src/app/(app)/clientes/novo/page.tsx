@@ -7,6 +7,7 @@ import { criarCliente } from "../../../actions";
 import { DadosCliente } from "@/components/dados-cliente";
 import { ehAdminSistema, franquiasAtivas } from "@/lib/acesso";
 import { CICLOS } from "@/lib/domain/ciclo";
+import { CamposPrecosCliente } from "@/components/precos-cliente";
 
 export const metadata = { title: "Novo cliente" };
 
@@ -37,13 +38,10 @@ export default async function NovoCliente({ searchParams }: { searchParams: Prom
             ))}
           </div>
           {s.nivel === "franqueadora" && (
-            <details className="mt-3 rounded-xl border border-dashed border-borda p-4 open:border-vigia">
-              <summary className="cursor-pointer text-sm font-semibold">Plano personalizado: negociar outro preço para este cliente</summary>
-              <div className="mt-3 grid gap-3 sm:grid-cols-3">
-                <div><label className="rotulo">Preço por placa/mês (R$)</label><input name="preco_personalizado" inputMode="decimal" placeholder="ex.: 7,50" className="campo" /></div>
-                <div><label className="rotulo">Saving sobre a economia (%)</label><input name="saving_personalizado" inputMode="decimal" placeholder="ex.: 18" className="campo" /></div>
-                <p className="self-end text-xs text-suave">Deixe em branco para usar o valor do plano escolhido acima. Os recursos e a frequência continuam os do plano.</p>
-              </div>
+            <details open className="mt-3 rounded-xl border border-dashed border-borda p-4 open:border-vigia">
+              <summary className="cursor-pointer text-sm font-semibold">Preços deste cliente: R$ por placa, % do saving, defesa e taxa de conveniência</summary>
+              <div className="mt-3"><CamposPrecosCliente /></div>
+              <p className="mt-2 text-xs text-suave">Em branco = valor do plano escolhido acima (placa e saving) ou o padrão do sistema (defesa e taxa). Os recursos e a frequência continuam os do plano.</p>
             </details>
           )}
           <div className="mt-3 grid gap-3 sm:grid-cols-3">

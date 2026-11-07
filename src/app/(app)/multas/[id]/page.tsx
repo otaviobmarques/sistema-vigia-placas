@@ -11,6 +11,7 @@ import { brl } from "@/lib/domain/money";
 import { Aviso, Card, ChipEstado, ChipPrazo, Mensagem } from "@/components/ui";
 import { Placa, Vigi } from "@/components/marca";
 import { adicionarCarrinho, indicar, pedirDefesaAction, protocolar, reconhecerSne } from "../../../actions";
+import { precosDoCliente } from "@/lib/services/precos";
 
 export default async function DetalheMulta({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ ok?: string; erro?: string }> }) {
   const s = await exigirCliente();
@@ -25,7 +26,7 @@ export default async function DetalheMulta({ params, searchParams }: { params: P
       condutores: (await listarCondutores(db, s.clienteId)).filter((c) => c.ativo),
       principal: (await db.one("select condutor_principal_id as id from placas where id = (select placa_id from multas where id = $1)", [id]))?.id ?? null,
       defesa: await db.one("select * from pedidos_defesa where multa_id = $1 order by criado_em desc limit 1", [id]),
-      cfg: await db.one("select preco_defesa from configuracao"),
+      cfg: { preco_defesa: (await precosDoCliente(db, s.clienteId)).defesa },
       captura: await db.one("select arquivo_nome, origem from notificacoes_capturadas where multa_id = $1 limit 1", [id]),
     };
   });

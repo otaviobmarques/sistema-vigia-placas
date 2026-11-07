@@ -2,6 +2,7 @@ import type { Db } from "../db";
 import { brl } from "../domain/money";
 import { enfileirar } from "../integrations/mensagens";
 import { registrarEconomia, registrarEvento } from "./multas";
+import { precosDoCliente } from "./precos";
 
 /** M12 · MVP: a defesa é um serviço da equipe, cobrado na fatura do mês via Asaas. */
 export async function pedirDefesa(db: Db, multaId: string, usuarioId: string) {
@@ -9,13 +10,13 @@ export async function pedirDefesa(db: Db, multaId: string, usuarioId: string) {
   if (!m) throw new Error("Multa não encontrada");
   const ja = await db.one("select id from pedidos_defesa where multa_id = $1 and status in ('aguardando_pagamento','em_andamento')", [multaId]);
   if (ja) return ja.id;
-  const cfg = await db.one("select preco_defesa from configuracao");
+  const preco = (await precosDoCliente(db, m.cliente_id)).defesa;
   const p = await db.one<{ id: string }>(
     "insert into pedidos_defesa (multa_id, cliente_id, preco, status) values ($1,$2,$3,'em_andamento') returning id",
-    [multaId, m.cliente_id, cfg!.preco_defesa],
+    [multaId, m.cliente_id, preco],
   );
   await db.q("update multas set estado = 'em_defesa' where id = $1", [multaId]);
-  await registrarEvento(db, { multaId, clienteId: m.cliente_id, tipo: "defesa_pedida", descricao: `Defesa contratada por ${brl(cfg!.preco_defesa)} (cobrada na fatura do mês)`, usuarioId });
+  await registrarEvento(db, { multaId, clienteId: m.cliente_id, tipo: "defesa_pedida", descricao: `Defesa contratada por ${brl(preco)} (cobrada na fatura do mês)`, usuarioId });
   await enfileirar(db, { clienteId: m.cliente_id, canal: "email", destino: "defesa@vigiaplaca.com.br", assunto: `Novo pedido de defesa · ${m.placa}`, corpo: `Auto ${m.auto_infracao} · ${m.descricao}` });
   return p!.id;
 }
