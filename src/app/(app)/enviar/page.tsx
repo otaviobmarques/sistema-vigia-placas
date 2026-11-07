@@ -3,6 +3,8 @@ import { GRAVIDADES } from "@/lib/domain/ctb";
 import { Cabecalho, Card, Mensagem } from "@/components/ui";
 import { Vigi } from "@/components/marca";
 import { capturarNotificacao } from "../../actions";
+import { LeitorDocumento } from "@/components/leitor-documento";
+import { leitorAtivo } from "@/lib/integrations/leitor";
 
 export const metadata = { title: "Enviar notificação" };
 
@@ -22,14 +24,14 @@ export default async function Enviar({ searchParams }: { searchParams: Promise<{
       <Card>
         <form action={capturarNotificacao} className="grid gap-4 sm:grid-cols-2">
           <div className="sm:col-span-2">
-            <label className="rotulo">Foto da carta ou PDF</label>
-            <input type="file" name="arquivo" accept="image/*,application/pdf" capture="environment" className="block w-full rounded-xl border border-dashed border-borda bg-nevoa p-4 text-sm" />
+            <LeitorDocumento foco="notificacao" ativo={leitorAtivo()} rotulo="Foto da carta ou PDF" />
           </div>
           <div><label className="rotulo">Origem</label><select name="origem" className="campo"><option value="foto">Foto da carta</option><option value="pdf">PDF do SNE</option><option value="email">E-mail</option></select></div>
           <div><label className="rotulo">Placa</label><select name="placa" className="campo" required>{placas.map((p) => <option key={p.placa} value={p.placa}>{p.placa}{p.apelido ? ` · ${p.apelido}` : ""}</option>)}</select></div>
           <div><label className="rotulo">Nº do auto de infração</label><input name="auto" required className="campo uppercase" /></div>
           <div><label className="rotulo">Órgão autuador</label><input name="orgao" placeholder="Ex.: Prefeitura de Contagem" className="campo" required /></div>
-          <div className="sm:col-span-2"><label className="rotulo">Descrição da infração</label><input name="descricao" className="campo" /></div>
+          <div><label className="rotulo">Descrição da infração</label><input name="descricao" className="campo" /></div>
+          <div><label className="rotulo">Código da infração</label><input name="codigo" inputMode="numeric" className="campo" /></div>
           <div><label className="rotulo">Gravidade</label><select name="gravidade" className="campo" defaultValue="media">{Object.entries(GRAVIDADES).map(([k, g]) => <option key={k} value={k}>{g.rotulo} · R$ {(g.valor / 100).toFixed(2).replace(".", ",")}</option>)}</select></div>
           <div><label className="rotulo">Valor (se diferente)</label><input name="valor" placeholder="R$" className="campo" /></div>
           <div><label className="rotulo">Data da infração</label><input type="date" name="data_infracao" className="campo" /></div>
@@ -38,7 +40,7 @@ export default async function Enviar({ searchParams }: { searchParams: Promise<{
           <div><label className="rotulo">Local</label><input name="local" className="campo" /></div>
           <div className="sm:col-span-2"><button className="btn-primario w-full">Enviar e começar a vigiar</button></div>
         </form>
-        <p className="mt-3 text-xs text-suave">A leitura automática (OCR) preenche estes campos quando estiver ativada; até lá, confira os dados da carta.</p>
+        <p className="mt-3 text-xs text-suave">A leitura automática é feita por IA e pode errar: confira os campos com a carta antes de enviar.</p>
       </Card>
     </div>
   );

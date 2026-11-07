@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.6.0",
     "@electric-sql/pglite": "^0.5.15",
     "bcryptjs": "^3.0.3",
     "jose": "^6.2.15",
