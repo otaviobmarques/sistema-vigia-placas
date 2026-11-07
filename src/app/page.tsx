@@ -5,7 +5,7 @@ import { SiteVendas } from "@/components/site/site-vendas";
 import { carregarPlanosSite } from "@/components/site/planos";
 
 export const metadata: Metadata = {
-  title: "Vigia Placa · Redução de custos com multas de frota",
+  title: { absolute: "Vigia Placa · Redução de custos com multas de frota" },
   description: "Monitoramento de multas por placa e Renavam em bases oficiais redundantes. Até 40% de desconto, zero multa NIC e saving só sobre a economia comprovada.",
 };
 

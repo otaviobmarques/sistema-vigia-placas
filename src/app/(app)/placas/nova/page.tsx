@@ -29,7 +29,7 @@ export default async function NovaPlaca({ searchParams }: { searchParams: Promis
   });
   return (
     <div className="mx-auto max-w-3xl">
-      <Cabecalho titulo="Cadastrar placa" sub="Lance uma placa de cada vez. A placa entra no monitoramento e a primeira consulta é feita na hora." acoes={<Link href="/placas/importar" className="btn-contorno">Várias placas (planilha)</Link>} />
+      <Cabecalho titulo="Cadastrar placa" sub="Lance uma placa de cada vez. A placa entra no monitoramento e a primeira consulta é feita na hora." />
       <Mensagem ok={sp.ok} erro={sp.erro} />
       <Card>
         {clientes.length === 0 ? (

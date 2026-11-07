@@ -9,6 +9,7 @@ function nomeFonte(servico: string) {
 }
 import { enfileirar } from "../integrations/mensagens";
 import { despacharOutbox } from "./despacho";
+import { ehEmail } from "../integrations/email";
 import { avisoDevido, emRisco, escolherFontes, proximaConsulta, type EstrategiaFontes, type FonteDados, type Frequencia } from "../domain/monitoramento";
 import { hojeISO, dataBR, diasEntre, somarDias } from "../domain/dates";
 import { melhorValorHoje, prazoIndicacao, valoresMulta } from "../domain/ctb";
@@ -16,6 +17,58 @@ import { brl } from "../domain/money";
 import { regra, registrarEvento, SELECT_MULTA, type MultaRow } from "./multas";
 
 const LIMITE_FALHAS = 5;
+
+/** Aviso no app (push) da equipe Vigia Placa quando chega multa nova. Prazo curto vira alerta. */
+async function avisarEquipeMultasNovas(db: Db, p: Record<string, any>, novas: number) {
+  const hoje = hojeISO();
+  const urg = await db.one<{ dias: number | null }>(
+    `select min(least(vencimento, case when condutor_id is null and notificada_em is not null then notificada_em + 30 end) - $2::date) as dias
+     from multas where placa_id = $1 and criado_em > now() - interval '1 hour' and estado not in ('paga','cancelada')`,
+    [p.id, hoje],
+  );
+  const dias = urg?.dias === null || urg?.dias === undefined ? null : Number(urg.dias);
+  const urgente = dias !== null && dias <= 7;
+  await enfileirar(db, {
+    clienteId: p.cliente_id, canal: "push", destino: "equipe",
+    assunto: urgente ? `⚠ Multa nova com prazo em ${dias} dia(s) · ${p.placa}` : `${novas} multa(s) nova(s) · ${p.cliente_nome}`,
+    corpo: `${p.cliente_nome} · placa ${p.placa}${urgente ? ". Resolva logo para não perder o desconto ou o prazo de indicação." : "."}`,
+    url: `/gestao/multas?novas=1&cliente=${p.cliente_id}`,
+  });
+}
+
+/**
+ * Resumo do dia para a equipe Vigia Placa (no app e por e-mail): multas novas nas últimas 24 h,
+ * clientes afetados, prazos em até 7 dias e notificadas sem condutor indicado. Um por dia.
+ */
+export async function resumoDiarioEquipe(db: Db) {
+  const hoje = hojeISO();
+  const ja = await db.one("select 1 from outbox where destino = 'equipe' and assunto like 'Resumo do dia%' and criado_em::date = $1::date", [hoje]);
+  if (ja) return null;
+  const r = await db.one(
+    `select
+       (select count(*) from multas m join clientes c on c.id = m.cliente_id where m.criado_em > now() - interval '24 hours' and m.estado not in ('paga','cancelada') and c.excluido_em is null) as novas,
+       (select count(distinct m.cliente_id) from multas m where m.criado_em > now() - interval '24 hours' and m.estado not in ('paga','cancelada')) as clientes,
+       (select coalesce(sum(m.valor),0) from multas m where m.criado_em > now() - interval '24 hours' and m.estado not in ('paga','cancelada')) as valor,
+       (select count(*) from multas m join clientes c on c.id = m.cliente_id where m.estado not in ('paga','cancelada') and c.excluido_em is null
+          and least(m.vencimento, case when m.condutor_id is null and m.notificada_em is not null then m.notificada_em + 30 end) between $1::date and $1::date + 7) as prazos7,
+       (select count(*) from multas m join clientes c on c.id = m.cliente_id where m.estado = 'notificada' and m.condutor_id is null and c.excluido_em is null) as sem_condutor,
+       (select count(*) from multas m join clientes c on c.id = m.cliente_id where m.estado not in ('paga','cancelada') and c.excluido_em is null) as abertas`,
+    [hoje],
+  );
+  const n = (k: string) => Number(r?.[k] ?? 0);
+  if (!n("novas") && !n("prazos7")) return null;
+  const assunto = `Resumo do dia · ${n("novas")} multa(s) nova(s)`;
+  const corpo = [
+    n("novas") ? `${n("novas")} multa(s) nova(s) em ${n("clientes")} cliente(s), somando ${brl(n("valor"))}.` : "Nenhuma multa nova nas últimas 24 horas.",
+    n("prazos7") ? `${n("prazos7")} multa(s) com prazo em até 7 dias.` : null,
+    n("sem_condutor") ? `${n("sem_condutor")} notificada(s) sem condutor indicado (risco de multa NIC).` : null,
+    `${n("abertas")} multa(s) em aberto no total.`,
+  ].filter(Boolean).join("\n");
+  await enfileirar(db, { clienteId: null, canal: "push", destino: "equipe", assunto, corpo, url: "/gestao/multas?novas=1" });
+  const equipe = await db.q<{ email: string }>("select email from usuarios where nivel = 'franqueadora' and ativo");
+  for (const u of equipe) if (ehEmail(u.email)) await enfileirar(db, { clienteId: null, canal: "email", destino: u.email, assunto, corpo, url: "/gestao/multas?novas=1" });
+  return { novas: n("novas"), prazos7: n("prazos7") };
+}
 
 export async function consultarPlaca(db: Db, placaId: string, opts: { avulsa?: boolean } = {}) {
   const p = await db.one(
@@ -125,7 +178,8 @@ export async function consultarPlaca(db: Db, placaId: string, opts: { avulsa?: b
     if (ins?.nova) {
       novas++;
       await registrarEvento(db, { multaId: ins.id, clienteId: p.cliente_id, tipo: "detectada", descricao: `Detectada pelo Vigia Placa`, fonte: `${m.fonteNome}${r.simulado ? " (simulado)" : ""}` });
-      for (const canal of p.alertas_canais as string[]) {
+      // Multa nova: o cliente sempre recebe por e-mail (o do cadastro) além dos canais escolhidos; e aparece no portal.
+      for (const canal of [...new Set([...(p.alertas_canais as string[]), "email"])]) {
         await enfileirar(db, {
           clienteId: p.cliente_id,
           canal: canal as any,
@@ -157,6 +211,7 @@ export async function consultarPlaca(db: Db, placaId: string, opts: { avulsa?: b
     "update placas set ultima_verificacao = now(), proxima_verificacao = $2, status = case when status in ('aguardando','erro') then 'ativa' else status end where id = $1",
     [p.id, prox],
   );
+  if (novas > 0) await avisarEquipeMultasNovas(db, p, novas);
   return { ok: true, novas, total: r.multas.length };
 }
 
@@ -204,8 +259,9 @@ export async function varredura(db: Db, limite = 200) {
     [hoje],
   );
   const avisos = await dispararAvisos(db);
+  const resumo = await resumoDiarioEquipe(db);
   const despacho = await despacharOutbox(db);
-  return { placas: devidas.length, novas, erros, adiadas, avisos, push: despacho.enviados };
+  return { placas: devidas.length, novas, erros, adiadas, avisos, resumo, push: despacho.enviados };
 }
 
 export async function dispararAvisos(db: Db) {

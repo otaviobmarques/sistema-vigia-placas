@@ -13,7 +13,7 @@ import { ESTADOS, type EstadoMulta } from "../domain/ctb";
 export type TipoColuna = "texto" | "num" | "brl" | "data";
 export interface Coluna { chave: string; rotulo: string; tipo: TipoColuna }
 export interface Tabela { titulo: string; descricao: string; colunas: Coluna[]; linhas: Record<string, string | number | null>[] }
-export interface Filtros { cliente?: string | null; placa?: string | null; condutor?: string | null; mes?: string | null }
+export interface Filtros { cliente?: string | null; placa?: string | null; condutor?: string | null; mes?: string | null; novas?: boolean }
 
 export const RELATORIOS = {
   faturamento: "Faturamento por cliente",
@@ -51,12 +51,13 @@ export async function multasEmAberto(db: Db, f: Filtros) {
   const cond: string[] = ["m.estado not in ('paga','cancelada')", "c.excluido_em is null"];
   if (f.cliente) { params.push(f.cliente); cond.push(`m.cliente_id = $${params.length}`); }
   if (f.placa) { params.push(`%${f.placa.replace(/[^A-Za-z0-9]/g, "").toUpperCase()}%`); cond.push(`p.placa like $${params.length}`); }
+  if (f.novas) cond.push("m.criado_em > now() - interval '24 hours'");
   if (f.condutor) {
     params.push(f.condutor);
     cond.push(`(m.condutor_id = $${params.length} or exists (select 1 from placa_condutores pc where pc.placa_id = m.placa_id and pc.condutor_id = $${params.length}))`);
   }
   return db.q(
-    `select m.id, m.cliente_id, c.nome as cliente, p.placa, p.apelido, m.descricao, m.gravidade, m.pontos, m.valor, m.estado, m.data_infracao,
+    `select m.id, m.cliente_id, m.criado_em, c.nome as cliente, p.placa, p.apelido, m.descricao, m.gravidade, m.pontos, m.valor, m.estado, m.data_infracao,
             o.nome as orgao, m.vencimento, m.notificada_em, (m.notificada_em + 30) as prazo_indicacao,
             least(m.vencimento, case when m.condutor_id is null and m.notificada_em is not null then m.notificada_em + 30 end) as prazo,
             cd.nome as condutor_indicado,

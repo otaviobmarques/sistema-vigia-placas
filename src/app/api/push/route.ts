@@ -16,8 +16,8 @@ export async function POST(req: Request) {
   const sub = corpo?.inscricao;
   const endpoint = String(sub?.endpoint ?? "");
   if (!/^https:\/\//.test(endpoint) || !sub?.keys?.p256dh || !sub?.keys?.auth) return NextResponse.json({ erro: "Inscrição inválida." }, { status: 400 });
-  // Cliente: avisos do próprio cliente. Franqueado/franqueadora: do cliente em foco, se houver.
-  const clienteId = s.clienteProprioId ?? s.clienteId ?? null;
+  // Cliente: avisos do próprio cliente. Equipe Vigia Placa: avisos da equipe (multas novas, resumo diário).
+  const clienteId = s.nivel === "cliente" ? s.clienteProprioId : s.nivel === "franqueado" ? s.clienteId ?? null : null;
   await sistema(async (db) => {
     await db.q(
       `insert into push_assinaturas (usuario_id, cliente_id, endpoint, p256dh, auth, agente) values ($1,$2,$3,$4,$5,$6)
@@ -28,7 +28,7 @@ export async function POST(req: Request) {
     if (clienteId) await db.q("update clientes set alertas_canais = array_append(alertas_canais, 'push') where id = $1 and not ('push' = any(alertas_canais))", [clienteId]);
   });
   if (corpo?.teste) {
-    await enviarPush({ endpoint, p256dh: sub.keys.p256dh, auth: sub.keys.auth }, { titulo: "Olá! Eu sou o Vigi.", corpo: "Notificações ativadas. Eu aviso aqui quando chegar multa nova e antes de cada prazo.", url: "/hoje", tag: "boas-vindas" });
+    await enviarPush({ endpoint, p256dh: sub.keys.p256dh, auth: sub.keys.auth }, { titulo: "Olá! Eu sou o Vigi.", corpo: s.nivel === "franqueadora" ? "Notificações ativadas. Eu aviso aqui quando chegar multa nova nos clientes e mando o resumo do dia." : "Notificações ativadas. Eu aviso aqui quando chegar multa nova e antes de cada prazo.", url: s.nivel === "franqueadora" ? "/gestao/multas?novas=1" : "/hoje", tag: "boas-vindas" });
   }
   return NextResponse.json({ ok: true });
 }
