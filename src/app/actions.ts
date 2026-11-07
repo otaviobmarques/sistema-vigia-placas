@@ -47,6 +47,41 @@ export async function entrar(_: unknown, f: FormData): Promise<{ erro?: string; 
   redirect("/");
 }
 
+export async function criarPrimeiroAdmin(f: FormData) {
+  const email = s(f, "email").toLowerCase();
+  const senha = s(f, "senha");
+  if (senha.length < 10) ir("/primeiro-acesso", { erro: "A senha precisa ter pelo menos 10 caracteres." });
+  const id = await sistema(async (db) => {
+    // Trava: só cria se ainda não houver nenhum administrador (checado dentro da mesma transação).
+    await db.q("lock table usuarios in exclusive mode");
+    const n = await db.one("select count(*) as n from usuarios where nivel = 'franqueadora'");
+    if (Number(n?.n) > 0) return null;
+    const r = await db.one<{ id: string }>(
+      "insert into usuarios (email, nome, senha_hash, nivel, perfil) values ($1,$2,$3,'franqueadora','admin') returning id",
+      [email, s(f, "nome"), bcrypt.hashSync(senha, 12)],
+    );
+    await auditar(db, { usuarioId: r!.id, acao: "primeiro_admin", entidade: "usuario", entidadeId: r!.id });
+    return r!.id;
+  });
+  if (!id) redirect("/login");
+  await criarSessao(id);
+  redirect("/backoffice");
+}
+
+export async function trocarSenha(f: FormData) {
+  const sessao = await exigirSessao();
+  const nova = s(f, "nova");
+  if (nova.length < 10) ir("/conta", { erro: "A nova senha precisa ter pelo menos 10 caracteres." });
+  if (nova !== s(f, "repete")) ir("/conta", { erro: "As duas senhas novas não conferem." });
+  const u = await sistema((db) => db.one("select senha_hash from usuarios where id = $1", [sessao.usuarioId]));
+  if (!u || !(await bcrypt.compare(s(f, "atual"), u.senha_hash))) ir("/conta", { erro: "Senha atual incorreta." });
+  await sistema(async (db) => {
+    await db.q("update usuarios set senha_hash = $2 where id = $1", [sessao.usuarioId, bcrypt.hashSync(nova, 12)]);
+    await auditar(db, { usuarioId: sessao.usuarioId, acao: "senha_trocada", entidade: "usuario", entidadeId: sessao.usuarioId });
+  });
+  ir("/conta", { ok: "Senha alterada." });
+}
+
 export async function sair() {
   await encerrarSessao();
   redirect("/login");

@@ -49,6 +49,9 @@ async function criarDriver(): Promise<Driver> {
       },
     };
   }
+  if (process.env.VERCEL) {
+    throw new Error("DATABASE_URL não configurada: na Vercel o banco precisa ser o Supabase (Settings › Environment Variables).");
+  }
   const { PGlite, types } = await import("@electric-sql/pglite");
   const dir = path.join(process.cwd(), "data", "pglite");
   fs.mkdirSync(dir, { recursive: true });
@@ -77,7 +80,9 @@ async function criarDriver(): Promise<Driver> {
 }
 
 async function migrar(d: Driver) {
-  await d.exec("create table if not exists schema_migrations (nome text primary key, aplicada_em timestamptz not null default now())");
+  // Só cria se faltar: em produção o usuário do app não tem permissão de CREATE no schema.
+  const existe = await d.transaction((x) => x("select to_regclass('public.schema_migrations') is not null as ok", []));
+  if (!existe[0]?.ok) await d.exec("create table schema_migrations (nome text primary key, aplicada_em timestamptz not null default now())");
   const dir = path.join(process.cwd(), "db", "migrations");
   const arquivos = fs.readdirSync(dir).filter((f) => f.endsWith(".sql")).sort();
   const feitas = new Set(
