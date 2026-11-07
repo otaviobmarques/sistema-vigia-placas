@@ -1,6 +1,7 @@
 import type { Db } from "../db";
 import { consultarMultas, erroDeConta, FONTES } from "../integrations/infosimples";
 import { enfileirar } from "../integrations/mensagens";
+import { despacharOutbox } from "./despacho";
 import { avisoDevido, proximaConsulta, type Frequencia } from "../domain/monitoramento";
 import { hojeISO, dataBR, diasEntre, somarDias } from "../domain/dates";
 import { melhorValorHoje, prazoIndicacao, valoresMulta } from "../domain/ctb";
@@ -78,6 +79,7 @@ export async function consultarPlaca(db: Db, placaId: string, opts: { avulsa?: b
           destino: canal === "email" ? p.email : canal === "whatsapp" ? p.whatsapp : p.cliente_id,
           assunto: `Opa, multa nova na placa ${p.placa}!`,
           corpo: `${m.descricao} · ${m.orgaoNome} · ${dataBR(m.dataInfracao)}. Valor cheio ${brl(m.valor)}. Abra o Vigia Placa para ver como pagar menos.`,
+          url: `/multas/${ins.id}`,
         });
       }
       // Pagamento automático (Configurações › Pagamento): multas com desconto até o valor definido vão para o carrinho.
@@ -125,7 +127,8 @@ export async function varredura(db: Db, limite = 200) {
     [hoje],
   );
   const avisos = await dispararAvisos(db);
-  return { placas: devidas.length, novas, erros, avisos };
+  const despacho = await despacharOutbox(db);
+  return { placas: devidas.length, novas, erros, avisos, push: despacho.enviados };
 }
 
 export async function dispararAvisos(db: Db) {
@@ -153,7 +156,7 @@ export async function dispararAvisos(db: Db) {
       const faltam = diasEntre(hoje, pr.data);
       const corpo = `Placa ${m.placa}: ${pr.texto.replace("{d}", String(faltam))}.`;
       for (const canal of m.alertas_canais) {
-        await enfileirar(db, { clienteId: m.cliente_id, canal: canal as any, destino: canal === "email" ? m.email : m.whatsapp, assunto: `Prazo em ${faltam} dia(s) · ${m.placa}`, corpo });
+        await enfileirar(db, { clienteId: m.cliente_id, canal: canal as any, destino: canal === "email" ? m.email : canal === "whatsapp" ? m.whatsapp : m.cliente_id, assunto: `Prazo em ${faltam} dia(s) · ${m.placa}`, corpo, url: `/multas/${m.id}` });
       }
       // Escalonamento: no último aviso, o franqueado também é avisado.
       if (ant <= 1 && m.franqueado_email) {
@@ -171,7 +174,7 @@ export async function avisosCondutores(db: Db) {
   const hoje = hojeISO();
   const ANTECEDENCIAS = [30, 15, 7, 1];
   const condutores = await db.q(
-    `select c.*, cl.email as cliente_email, cl.nome as cliente_nome from condutores c join clientes cl on cl.id = c.cliente_id
+    `select c.*, cl.email as cliente_email, cl.nome as cliente_nome, cl.alertas_canais from condutores c join clientes cl on cl.id = c.cliente_id
      where c.ativo and (c.cnh_validade between $1 and $2 or c.toxicologico_validade between $1 and $2)`,
     [hoje, somarDias(hoje, 30)],
   );
@@ -186,6 +189,7 @@ export async function avisosCondutores(db: Db) {
       const corpo = `${c.nome}: ${rotulo} vence em ${dataBR(data)} (${diasEntre(hoje, data) === 0 ? "hoje" : `em ${diasEntre(hoje, data)} dia(s)`}). Dirigir com o documento vencido é infração gravíssima.`;
       await enfileirar(db, { clienteId: c.cliente_id, canal: "email", destino: c.cliente_email, assunto: `Vencimento ${titulo} · ${c.nome}`, corpo });
       await enfileirar(db, { clienteId: c.cliente_id, canal: "whatsapp", destino: c.whatsapp, assunto: `Vencimento ${titulo}`, corpo });
+      if ((c.alertas_canais as string[]).includes("push")) await enfileirar(db, { clienteId: c.cliente_id, canal: "push", destino: c.cliente_id, assunto: `Vencimento ${titulo} · ${c.nome}`, corpo, url: "/condutores" });
       n++;
     }
   }

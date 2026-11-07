@@ -64,7 +64,8 @@ Cada integração tem cliente real e entra em **modo simulado** quando falta a c
 | Asaas (`ASAAS_API_KEY`) | Pix BR Code válido + botão "simular confirmação" | Cobrança Pix com `split` por `walletId`, QR Code, Pague Contas (`/bill`) e webhook em `/api/webhooks/asaas` (header `asaas-access-token` = `ASAAS_WEBHOOK_TOKEN`) |
 | Celcoin | Simulada | Pendente de proposta comercial |
 | Claude (`ANTHROPIC_API_KEY`) | Campos preenchidos à mão | Leitura automática da foto/PDF da notificação (tela Enviar) e do CRLV-e (tela Placas) com Claude Haiku 5.5. Saída estruturada e validada; a pessoa confere antes de enviar; limite de 100 leituras/dia por cliente |
-| WhatsApp / e-mail / push | Mensagens vão para a fila `outbox` (visível no backoffice) | Falta o despachante (WhatsApp Cloud API + e-mail transacional) |
+| Push (`VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`) | Botão de ativar não aparece | Notificações no celular e no computador (PWA): multa nova, prazos, CNH/toxicológico e Pix confirmado, com link direto para a tela. Enviadas logo após cada ação e na varredura diária. No iPhone, só com o app adicionado à Tela de Início |
+| WhatsApp / e-mail | Mensagens ficam na fila `outbox` (visível no backoffice) | Falta o despachante (WhatsApp Cloud API + e-mail transacional) |
 
 ## Produção (Vercel + Supabase)
 

@@ -161,7 +161,9 @@ export async function confirmarPagamento(db: Db, pagamentoId: string) {
     await db.q("delete from carrinho_itens where multa_id = $1", [it.multa_id]);
   }
   await db.q("update pagamentos set status = $2 where id = $1", [pagamentoId, falhas ? "parcial" : "quitado"]);
-  const c = await db.one("select whatsapp from clientes where id = $1", [pg.cliente_id]);
-  await enfileirar(db, { clienteId: pg.cliente_id, canal: "whatsapp", destino: c?.whatsapp, assunto: "Economizei pra você!", corpo: `Pix recebido. ${itens.length - falhas} multa(s) quitada(s), economia de ${brl(pg.economia)}. Comprovantes no app.` });
+  const c = await db.one("select whatsapp, alertas_canais from clientes where id = $1", [pg.cliente_id]);
+  const corpo = `Pix recebido. ${itens.length - falhas} multa(s) quitada(s), economia de ${brl(pg.economia)}. Comprovantes no app.`;
+  await enfileirar(db, { clienteId: pg.cliente_id, canal: "whatsapp", destino: c?.whatsapp, assunto: "Economizei pra você!", corpo });
+  if ((c?.alertas_canais ?? []).includes("push")) await enfileirar(db, { clienteId: pg.cliente_id, canal: "push", destino: pg.cliente_id, assunto: "Economizei pra você!", corpo, url: `/pagamentos/${pagamentoId}` });
   return { jaProcessado: false, falhas };
 }

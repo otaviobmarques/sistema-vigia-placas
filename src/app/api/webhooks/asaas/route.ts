@@ -3,7 +3,8 @@
  * igual a ASAAS_WEBHOOK_TOKEN (enviado no header asaas-access-token). Idempotente.
  */
 import { timingSafeEqual } from "node:crypto";
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
+import { despacharOutbox } from "@/lib/services/despacho";
 import { sistema } from "@/lib/db";
 import { confirmarPagamento } from "@/lib/services/pagamentos";
 
@@ -20,7 +21,10 @@ export async function POST(req: Request) {
   if (!ev?.event) return NextResponse.json({ erro: "evento inválido" }, { status: 400 });
   if (["PAYMENT_RECEIVED", "PAYMENT_CONFIRMED"].includes(ev.event) && ev.payment?.id) {
     const pg = await sistema((db) => db.one("select id from pagamentos where asaas_id = $1", [ev.payment.id]));
-    if (pg) await sistema((db) => confirmarPagamento(db, pg.id));
+    if (pg) {
+      await sistema((db) => confirmarPagamento(db, pg.id));
+      after(() => sistema((db) => despacharOutbox(db)).then(() => undefined, () => undefined));
+    }
     else await sistema((db) => db.q("update faturas set status = 'paga' where asaas_id = $1", [ev.payment.id]));
   }
   if (["PAYMENT_REFUNDED", "PAYMENT_DELETED"].includes(ev.event) && ev.payment?.id) {
