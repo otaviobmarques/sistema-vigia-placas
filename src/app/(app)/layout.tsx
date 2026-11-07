@@ -2,7 +2,7 @@ import Link from "next/link";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { exigirSessao, noEscopo } from "@/lib/auth";
-import { Logo } from "@/components/marca";
+import { CreditoDomma, Logo } from "@/components/marca";
 import { sair, sairCliente } from "../actions";
 import { NavLink } from "@/components/nav-link";
 
@@ -72,6 +72,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <div className="truncate font-medium text-white">{s.nome}</div>
           <div className="truncate">{s.email}</div>
           <div className="mt-2 flex gap-3"><Link href="/conta" className="underline hover:text-white">Minha conta</Link><form action={sair}><button className="underline hover:text-white">Sair</button></form></div>
+          <CreditoDomma negativo className="mt-4" />
         </div>
       </aside>
 
@@ -93,6 +94,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
       <main className="min-w-0 flex-1 px-4 pb-28 pt-6 sm:px-8 lg:pb-10 lg:pt-8">
         <div className="mx-auto max-w-6xl">{children}</div>
+        <div className="nao-imprimir mt-10 flex justify-center lg:hidden"><CreditoDomma /></div>
       </main>
 
       {s.clienteId && (

@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { sistema } from "@/lib/db";
-import { Logo, Vigi } from "@/components/marca";
+import { CreditoDomma, Logo, Vigi } from "@/components/marca";
 import { Mensagem } from "@/components/ui";
 import { criarPrimeiroAdmin } from "../actions";
 
@@ -24,6 +24,7 @@ export default async function PrimeiroAcesso({ searchParams }: { searchParams: P
         <div><label className="rotulo">Senha (mínimo 10 caracteres)</label><input name="senha" type="password" minLength={10} required className="campo" /></div>
         <button className="btn-primario w-full">Criar administrador</button>
       </form>
+      <div className="mt-10 flex justify-center"><CreditoDomma /></div>
     </main>
   );
 }

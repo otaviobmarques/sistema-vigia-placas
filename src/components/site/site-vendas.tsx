@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Logo, Placa, Vigi } from "@/components/marca";
 import type { PlanoSite } from "./planos";
 import { Simulador } from "./simulador";
+import { LogoRedBox } from "./logo-redbox";
 import { Moldura, TelasSistema } from "./telas";
 
 /** Contato comercial: WhatsApp (SITE_WHATSAPP, só dígitos com DDI) ou e-mail (SITE_EMAIL). */
@@ -278,7 +279,7 @@ export function SiteVendas({ planos }: { planos: PlanoSite[] }) {
         <div className="border-t border-white/10">
           <p className="mx-auto flex max-w-6xl items-center justify-center gap-2 px-4 py-4 text-xs">
             Site desenvolvido pela Agência
-            <span aria-label="RedBox" className="font-display text-sm font-extrabold tracking-[0.08em]"><span className="text-[#ff2d33]">RED</span><span className="text-white">BOX</span></span>
+            <LogoRedBox negativo altura={18} />
           </p>
         </div>
       </footer>

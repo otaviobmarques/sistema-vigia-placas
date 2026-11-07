@@ -137,3 +137,23 @@ export function Vigi({ pose = "ola", size = 140 }: { pose?: Pose; size?: number 
     </svg>
   );
 }
+
+/** Selo "Desenvolvido por Domma Tecnologia" (sistema e app). */
+export function CreditoDomma({ negativo = false, className = "" }: { negativo?: boolean; className?: string }) {
+  const escuro = negativo ? "#FFFFFF" : "#1C1238";
+  return (
+    <span aria-label="Desenvolvido por Domma Tecnologia" className={`inline-flex items-center gap-2 text-[10px] ${negativo ? "text-white/50" : "text-suave"} ${className}`}>
+      <span>Desenvolvido por</span>
+      <span className="inline-flex items-center gap-1.5">
+        <svg width="30" height="20" viewBox="0 0 120 80" aria-hidden>
+          <path d="M10 62 C 24 40, 30 26, 38 26 C 48 26, 52 64, 60 64 C 68 64, 72 26, 82 26 C 90 26, 96 40, 110 62" fill="none" stroke="#7161F5" strokeWidth="14" strokeLinecap="round" />
+          <circle cx="60" cy="13" r="10" fill={escuro} />
+        </svg>
+        <span className="flex flex-col leading-none">
+          <span className="font-sans text-[13px] font-extrabold tracking-tight" style={{ color: escuro }}>Domma</span>
+          <span className="text-[6.5px] font-bold tracking-[0.32em] text-[#7161F5]">TECNOLOGIA</span>
+        </span>
+      </span>
+    </span>
+  );
+}

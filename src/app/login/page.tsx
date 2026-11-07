@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { sessaoAtual } from "@/lib/auth";
 import { sistema } from "@/lib/db";
-import { Logo, Vigi } from "@/components/marca";
+import { CreditoDomma, Logo, Vigi } from "@/components/marca";
 import { FormLogin } from "./form";
 
 export const metadata = { title: "Entrar" };
@@ -48,6 +48,7 @@ export default async function Login() {
               </ul>
             </div>
           )}
+          <div className="mt-10 flex justify-center"><CreditoDomma /></div>
         </div>
       </section>
     </main>

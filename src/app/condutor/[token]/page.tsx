@@ -3,7 +3,7 @@ import { sistema } from "@/lib/db";
 import { SELECT_MULTA, type MultaRow } from "@/lib/services/multas";
 import { prazoIndicacao, GRAVIDADES } from "@/lib/domain/ctb";
 import { dataBR } from "@/lib/domain/dates";
-import { Logo, Placa, Vigi } from "@/components/marca";
+import { CreditoDomma, Logo, Placa, Vigi } from "@/components/marca";
 import { Mensagem } from "@/components/ui";
 import { aceitarIndicacaoAction } from "../../actions";
 
@@ -41,6 +41,7 @@ export default async function AceiteCondutor({ params, searchParams }: { params:
           <button className="btn-primario w-full">Aceitar indicação</button>
         </form>
       )}
+      <div className="mt-10 flex justify-center"><CreditoDomma /></div>
     </main>
   );
 }
