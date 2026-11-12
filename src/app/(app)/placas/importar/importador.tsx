@@ -28,7 +28,7 @@ export function Importador({ clienteFoco }: { clienteFoco: string | null }) {
             <button className="btn-primario btn-sm" disabled={pendente}>{pendente ? "Lendo…" : "Validar planilha"}</button>
             <a href="/api/placas/modelo" className="link text-xs">Baixar modelo</a>
           </div>
-          {clienteFoco && <p className="mt-2 text-xs text-suave">Linhas sem a coluna “cliente” vão para {clienteFoco}.</p>}
+          {clienteFoco && <p className="mt-2 text-xs text-suave">Linhas sem CNPJ/CPF na coluna “cliente” vão para {clienteFoco}.</p>}
         </form>
         <div className="rounded-2xl border border-economia/40 bg-economia-100/60 p-4">
           <div className="text-xs text-economia">Prontas para importar</div>
