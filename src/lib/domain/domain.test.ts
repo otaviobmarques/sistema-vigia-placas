@@ -47,7 +47,8 @@ describe("validações", () => {
     expect(validarRenavam(r).ok).toBe(true);
     const errado = r.slice(0, 10) + ((Number(r[10]) + 1) % 10);
     expect(validarRenavam(errado).ok).toBe(false);
-    expect(validarRenavam("9876543")).toMatchObject({ ok: false, erro: "Renavam com dígitos faltando" });
+    expect(validarRenavam("9876543")).toMatchObject({ ok: false, erro: "Renavam com dígito verificador inválido" }); // completado com zeros, mas o dígito não confere
+    expect(validarRenavam("")).toMatchObject({ ok: false, erro: "Informe o Renavam" });
   });
   it("CPF e CNPJ (inclusive alfanumérico)", () => {
     expect(validarCPF("529.982.247-25")).toBe(true);
@@ -222,5 +223,16 @@ describe("pode dirigir", () => {
     expect(podeDirigir({ ativo: true }, sit({ cnhValidade: null }))).toMatchObject({ pode: true, motivos: ["validade da CNH não informada"] });
     expect(podeDirigir({ ativo: true, cnh_categoria: "E" }, sit({ toxicologicoValidade: "2026-11-01" })).motivos).toContain("exame toxicológico vencido");
     expect(podeDirigir({ ativo: true, cnh_categoria: "B" }, sit({ toxicologicoValidade: "2026-11-01" })).pode).toBe(true);
+  });
+});
+
+describe("zeros à esquerda que faltam", async () => {
+  const { validarRenavam } = await import("./validators");
+  it("Renavam com 9 ou 10 dígitos é completado com zeros", () => {
+    expect(validarRenavam("1232276623")).toEqual({ ok: true, renavam: "01232276623" });
+    expect(validarRenavam("157218287")).toEqual({ ok: true, renavam: "00157218287" });
+  });
+  it("Renavam completado ainda passa pelo dígito verificador", () => {
+    expect(validarRenavam("1232276624").ok).toBe(false);
   });
 });

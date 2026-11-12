@@ -1,7 +1,7 @@
 /** Cadastro de placas em lote (T09): planilha .xlsx/.csv com pré-visualização de erros linha a linha. */
 import * as XLSX from "xlsx";
 import type { Db } from "../db";
-import { somenteDocumento, validarPlaca, validarRenavam } from "../domain/validators";
+import { somenteDocumento, tipoDocumento, validarPlaca, validarRenavam } from "../domain/validators";
 
 export const COLUNAS = ["cliente", "placa", "renavam", "uf", "apelido", "grupo", "centro_custo", "condutor_principal"] as const;
 const UFS = "AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO".split(" ");
@@ -46,10 +46,15 @@ export async function validarLinhas(db: Db, rows: Record<string, string>[], clie
   return rows.map((r, i) => {
     const erros: string[] = [];
     const doc = somenteDocumento(r.cliente ?? r.cpf_cnpj ?? "");
-    // O Excel apaga zeros à esquerda quando o documento vira número: tenta também com 11 (CPF) e 14 (CNPJ) dígitos.
-    const candidatos = /^\d+$/.test(doc) ? [doc, doc.padStart(11, "0"), doc.padStart(14, "0")] : [doc];
-    let cli = doc ? candidatos.map((d) => porDoc.get(d)).find(Boolean) ?? null : null;
-    if (doc && !cli) erros.push(/[A-Z]{3}/.test(doc) && !/^[0-9A-Z]{14}$/.test(doc) ? "Use o CNPJ ou CPF do cliente, não o nome" : "CNPJ/CPF não encontrado na sua carteira");
+    let cli = doc ? porDoc.get(doc) ?? null : null;
+    if (doc && !cli) {
+      const valido = !!tipoDocumento(doc);
+      erros.push(
+        /[A-Z]{3}/.test(doc) && !/^[0-9A-Z]{14}$/.test(doc) ? "Use o CNPJ ou CPF do cliente, não o nome"
+        : !valido ? "CNPJ/CPF inválido. Se você arrastou a célula no Excel, ele somou 1 a cada linha: copie e cole o mesmo número"
+        : "CNPJ/CPF não encontrado na sua carteira",
+      );
+    }
     if (!doc && clientePadraoId) cli = clientes.find((c) => c.id === clientePadraoId) ?? null;
     if (!cli && !doc) erros.push("Informe o CNPJ ou CPF do cliente");
 
