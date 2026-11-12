@@ -18,7 +18,7 @@ export async function chamarDirectData(placa: string, renavam: string): Promise<
   url.searchParams.set("Placa", placa);
   url.searchParams.set("Renavam", renavam);
   url.searchParams.set("TOKEN", process.env.DIRECTDATA_TOKEN!);
-  const res = await fetch(url, { headers: { "user-agent": "VigiaPlaca/1.0", accept: "application/json" }, signal: AbortSignal.timeout(120_000) });
+  const res = await fetch(url, { headers: { "user-agent": "VigiaPlaca/1.0", accept: "application/json" }, signal: AbortSignal.timeout(90_000) });
   return res.json().catch(() => ({ metaDados: { resultado: `HTTP ${res.status}`, mensagem: "resposta não é JSON" } }));
 }
 

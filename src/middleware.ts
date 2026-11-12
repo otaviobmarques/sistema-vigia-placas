@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-const PUBLICAS = ["/login", "/primeiro-acesso", "/condutor/", "/api/webhooks/", "/api/cron/", "/manifest.webmanifest", "/icone.svg", "/sw.js", "/site/", "/og.png", "/icon-", "/apple-touch-icon.png", "/favicon.ico"];
+const PUBLICAS = ["/login", "/primeiro-acesso", "/condutor/", "/api/webhooks/", "/api/cron/", "/api/interno/", "/manifest.webmanifest", "/icone.svg", "/sw.js", "/site/", "/og.png", "/icon-", "/apple-touch-icon.png", "/favicon.ico"];
 
 /** Barreira rápida: sem cookie de sessão, vai para o login. A verificação real está em lib/auth. */
 export function middleware(req: NextRequest) {
