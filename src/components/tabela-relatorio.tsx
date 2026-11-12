@@ -1,13 +1,13 @@
 import { brl } from "@/lib/domain/money";
 import { dataBR } from "@/lib/domain/dates";
-import type { Tabela } from "@/lib/services/relatorios-gestao";
+import { somavel, type Tabela } from "@/lib/services/relatorios-gestao";
 import { Vazio } from "@/components/ui";
 
 /** Tabela genérica de relatório (colunas tipadas), com linha de totais para valores e números. */
 export function TabelaRelatorio({ t }: { t: Tabela }) {
   if (!t.linhas.length) return <Vazio>Nada encontrado com estes filtros.</Vazio>;
   const fmt = (tipo: string, v: unknown) => (v === null || v === undefined || v === "" ? "—" : tipo === "brl" ? brl(Number(v)) : tipo === "data" ? dataBR(String(v)) : String(v));
-  const somaveis = t.colunas.filter((c) => c.tipo === "brl" || (c.tipo === "num" && !/dias/i.test(c.rotulo)));
+  const somaveis = t.colunas.filter(somavel);
   return (
     <div className="-mx-5 overflow-x-auto">
       <table className="tabela min-w-[880px]">

@@ -18,6 +18,7 @@ export default async function NovoCliente({ searchParams }: { searchParams: Prom
     planos: await db.q("select * from planos order by preco_placa nulls last"),
     franqueados: s.nivel === "franqueadora" ? await db.q("select id, nome from franqueados where ativo order by nome") : [],
     cfg: await db.one("select termo_versao from configuracao"),
+    grupos: await db.q<{ id: string; nome: string }>("select id, nome from grupos_economicos order by nome"),
   }));
   return (
     <div className="mx-auto max-w-3xl">
@@ -26,6 +27,17 @@ export default async function NovoCliente({ searchParams }: { searchParams: Prom
       <form action={criarCliente} className="space-y-6">
         <Card titulo="1. Dados">
           <DadosCliente />
+          <div className="mt-4 grid gap-3 border-t border-borda pt-4 sm:grid-cols-2">
+            <div>
+              <label className="rotulo">Grupo econômico (opcional)</label>
+              <select name="grupo_id" defaultValue="" className="campo"><option value="">Nenhum</option>{d.grupos.map((g) => <option key={g.id} value={g.id}>{g.nome}</option>)}</select>
+            </div>
+            <div>
+              <label className="rotulo">ou crie um grupo novo</label>
+              <input name="grupo_novo" placeholder="Ex.: Grupo Raltex" className="campo" />
+            </div>
+            <p className="text-xs text-suave sm:col-span-2">Use para empresas com vários CNPJs: os relatórios podem somar todos os clientes do grupo.</p>
+          </div>
         </Card>
         <Card titulo="2. Plano e cobrança">
           <div className="grid gap-3 sm:grid-cols-3">

@@ -56,6 +56,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     { href: "/painel", rotulo: "Dashboard" },
     ...(s.perfil === "admin" ? [{ href: "/backoffice", rotulo: "Backoffice" }] : []),
     { href: "/carteira", rotulo: "Clientes" },
+    { href: "/gestao/grupos", rotulo: "Grupos econômicos" },
     { href: "/gestao/multas", rotulo: "Multas em aberto", n: nNovasEquipe || undefined, novas: true },
     { href: "/placas/nova", rotulo: "Cadastrar placa" },
     { href: "/placas/importar", rotulo: "Importar placas" },
