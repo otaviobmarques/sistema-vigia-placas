@@ -3,7 +3,7 @@ import { exigirSessao, noEscopo } from "@/lib/auth";
 import { Cabecalho, Card, Mensagem, Numero, Vazio } from "@/components/ui";
 import { Placa } from "@/components/marca";
 import { BotaoEnviar } from "@/components/botao-enviar";
-import { diagnostico, MINUTOS_NA_FILA, nomeFonte, placasParaReprocessar, type PlacaReprocessar } from "@/lib/services/reprocessamento";
+import { diagnostico, logoFonte, MINUTOS_NA_FILA, nomeFonte, placasParaReprocessar, type PlacaReprocessar } from "@/lib/services/reprocessamento";
 import { corrigirEReprocessarPlaca, reprocessarPlacas } from "../../../actions";
 
 export const metadata = { title: "Reprocessamento de placas" };
@@ -64,7 +64,16 @@ export default async function Reprocessamento({ searchParams }: { searchParams: 
                     </div>
                     {!!p.erros?.length && (
                       <ul className="mt-1 space-y-0.5 text-xs text-suave">
-                        {p.erros.map((e, i) => <li key={i}><b className="text-vigia">{nomeFonte(e.fonte)}:</b> {e.erro}</li>)}
+                        {p.erros.map((e, i) => {
+                          const logo = logoFonte(e.fonte);
+                          return (
+                            <li key={i} className="flex items-start gap-2">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              {logo && <img src={logo} alt="" className="mt-0.5 h-3.5 w-20 shrink-0 object-contain object-left" />}
+                              <span><b className="text-vigia">{nomeFonte(e.fonte)}:</b> {e.erro}</span>
+                            </li>
+                          );
+                        })}
                       </ul>
                     )}
                     <details className="mt-2">

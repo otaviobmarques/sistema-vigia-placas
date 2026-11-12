@@ -50,5 +50,7 @@ export function diagnostico(erros: Array<{ fonte: string; erro: string }> | null
   return { tipo: "fonte", texto: "Erro não identificado. Confira os dados e reprocesse." };
 }
 
+export const logoFonte = (f: string) => (f === "directdata" ? "/fontes/directdata.png" : f.startsWith("infosimples") ? "/fontes/infosimples.png" : null);
+
 export const nomeFonte = (f: string) =>
   f === "directdata" ? "Direct Data" : f.startsWith("infosimples:") ? `Infosimples (${f.slice("infosimples:".length)})` : f === "infosimples" ? "Infosimples" : f || "—";

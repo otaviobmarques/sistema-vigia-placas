@@ -111,12 +111,13 @@ export default async function Painel({ searchParams }: { searchParams: Promise<{
         <Link href="/gestao/relatorios?tipo=consultas-api" className="link text-xs">Ver por base e por cliente</Link>
       </div>
       <div className="mb-6 grid gap-3 sm:grid-cols-2">
-        {(["Direct Data", "Infosimples"] as const).map((nome) => {
+        {([["Direct Data", "/fontes/directdata.png"], ["Infosimples", "/fontes/infosimples.png"]] as const).map(([nome, logo]) => {
           const a = d.apis.find((x) => x.provedor === nome) ?? { consultas: 0, ok: 0, erros: 0, custo: 0, placas: 0 };
           return (
             <div key={nome} className="card p-4">
               <div className="flex items-baseline justify-between gap-2">
-                <span className="font-bold">{nome}</span>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={logo} alt={nome} title={nome} className="h-7 w-auto" />
                 <span className="num text-xl font-extrabold">{brl(a.custo)}</span>
               </div>
               <div className="mt-2 grid grid-cols-4 gap-2 text-center text-xs text-suave">
