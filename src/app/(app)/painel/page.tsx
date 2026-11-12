@@ -6,7 +6,7 @@ import { rotuloPerfil } from "@/lib/acesso";
 import { Cabecalho, Card, Numero, Vazio } from "@/components/ui";
 import { GraficoBarras } from "@/components/grafico-barras";
 import { Notificacoes } from "@/components/notificacoes";
-import { rankingCondutores } from "@/lib/services/relatorios-gestao";
+import { consultasPorApi, rankingCondutores } from "@/lib/services/relatorios-gestao";
 
 export const metadata = { title: "Dashboard" };
 
@@ -64,6 +64,7 @@ export default async function Painel({ searchParams }: { searchParams: Promise<{
       [meses],
     ),
     ranking: await rankingCondutores(db, {}, 5),
+    apis: await consultasPorApi(db, mes),
     fontes: await db.q(
       `select f.nome, count(q.id) as consultas, count(*) filter (where q.resultado = 'erro') as erros, coalesce(sum(q.custo),0) as custo
        from consultas q join fontes f on f.id = q.fonte_id where to_char(q.data,'YYYY-MM') = $1 group by f.nome order by custo desc`,
@@ -103,6 +104,31 @@ export default async function Painel({ searchParams }: { searchParams: Promise<{
         <Numero rotulo="Custo com consultas (API)" valor={brl(custo)} detalhe={`${t.consultas_mes} consultas · ${t.erros_mes} com erro`} />
         <Numero rotulo="Custo de API por placa" valor={brl(placas ? Math.round(custo / placas) : 0)} detalhe="no mês, por placa gerenciada" />
         <Numero tom={faturamento && custo / faturamento > 0.25 ? "rec" : "economia"} rotulo="Custo de API / faturamento" valor={pct(custo, faturamento)} detalhe="meta: até 25%" />
+      </div>
+
+      <div className="mb-2 flex items-baseline justify-between gap-2">
+        <p className="sobretitulo">Consultas por API no mês</p>
+        <Link href="/gestao/relatorios?tipo=consultas-api" className="link text-xs">Ver por base e por cliente</Link>
+      </div>
+      <div className="mb-6 grid gap-3 sm:grid-cols-2">
+        {([["Direct Data", "/fontes/directdata.png"], ["Infosimples", "/fontes/infosimples.png"]] as const).map(([nome, logo]) => {
+          const a = d.apis.find((x) => x.provedor === nome) ?? { consultas: 0, ok: 0, erros: 0, custo: 0, placas: 0 };
+          return (
+            <div key={nome} className="card p-4">
+              <div className="flex items-baseline justify-between gap-2">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={logo} alt={nome} title={nome} className="h-7 w-auto" />
+                <span className="num text-xl font-extrabold">{brl(a.custo)}</span>
+              </div>
+              <div className="mt-2 grid grid-cols-4 gap-2 text-center text-xs text-suave">
+                <div><b className="num block text-lg text-vigia">{a.consultas}</b>consultas</div>
+                <div><b className="num block text-lg text-economia">{a.ok}</b>com sucesso</div>
+                <div><b className={`num block text-lg ${a.erros ? "text-rec" : "text-vigia"}`}>{a.erros}</b>com erro</div>
+                <div><b className="num block text-lg text-vigia">{brl(a.consultas ? Math.round(a.custo / a.consultas) : 0)}</b>custo médio</div>
+              </div>
+            </div>
+          );
+        })}
       </div>
 
       <div className="mb-6 grid gap-6 lg:grid-cols-3">

@@ -1099,3 +1099,55 @@ export async function testarFonteInfosimples(_: unknown, f: FormData): Promise<{
     return { erro: `Falha ao chamar a Infosimples: ${e.message}` };
   }
 }
+
+// ---------------- Reprocessamento de placas (equipe Vigia Placa) ----------------
+
+const VOLTA_REPROC = "/gestao/reprocessamento";
+
+/** Marca as placas como "na fila" e dispara uma nova consulta para cada uma. */
+async function reprocessar(sessao: Sessao, ids: string[]) {
+  const validos = await noEscopo(sessao, async (db) => {
+    const r = await db.q<{ id: string }>(
+      `update placas set status = 'aguardando', reprocessar_em = now()
+        where id = any($1::uuid[]) and status <> 'pausada' and cliente_id in (select id from clientes where excluido_em is null) returning id`,
+      [ids],
+    );
+    if (r.length) await auditar(db, { usuarioId: sessao.usuarioId, acao: "placas_reprocessadas", entidade: "placas", dados: { quantidade: r.length } });
+    return r.map((x) => x.id);
+  });
+  consultarDepois(validos);
+  return validos.length;
+}
+
+export async function reprocessarPlacas(f: FormData) {
+  const sessao = await exigirSessao(["franqueadora", "franqueado"]);
+  const ids = f.getAll("id").map(String).filter((x) => /^[0-9a-f-]{36}$/i.test(x)).slice(0, 1000);
+  if (!ids.length) ir(VOLTA_REPROC, { erro: "Nenhuma placa para reprocessar." });
+  const n = await reprocessar(sessao, ids);
+  revalidatePath("/", "layout");
+  ir(VOLTA_REPROC, { ok: `${n} placa(s) enviada(s) para nova consulta. O resultado aparece aqui em alguns minutos.` });
+}
+
+export async function corrigirEReprocessarPlaca(f: FormData) {
+  const sessao = await exigirSessao(["franqueadora", "franqueado"]);
+  const id = s(f, "id");
+  const pv = validarPlaca(s(f, "placa"));
+  const rv = validarRenavam(s(f, "renavam"));
+  const uf = s(f, "uf").toUpperCase();
+  if (!pv.ok) ir(VOLTA_REPROC, { erro: pv.erro });
+  if (!rv.ok) ir(VOLTA_REPROC, { erro: rv.erro });
+  if (!/^[A-Z]{2}$/.test(uf)) ir(VOLTA_REPROC, { erro: "Informe a UF com 2 letras." });
+  try {
+    await noEscopo(sessao, async (db) => {
+      const antes = await db.one<{ placa: string; renavam: string; uf: string; cliente_id: string }>("select placa, renavam, uf, cliente_id from placas where id = $1", [id]);
+      if (!antes) throw new Error("Placa não encontrada.");
+      await db.q("update placas set placa = $2, renavam = $3, uf = $4 where id = $1", [id, (pv as any).placa, (rv as any).renavam, uf]);
+      await auditar(db, { usuarioId: sessao.usuarioId, clienteId: antes.cliente_id, acao: "placa_corrigida", entidade: "placa", entidadeId: id, dados: { antes: { placa: antes.placa, renavam: antes.renavam, uf: antes.uf }, depois: { placa: (pv as any).placa, renavam: (rv as any).renavam, uf } } });
+    });
+  } catch (e: any) {
+    ir(VOLTA_REPROC, { erro: String(e.message).includes("placas_unica_ativa") ? "Esta placa já está ativa em outro cliente." : e.message });
+  }
+  await reprocessar(sessao, [id]);
+  revalidatePath("/", "layout");
+  ir(VOLTA_REPROC, { ok: `Placa ${(pv as any).placa} corrigida e enviada para nova consulta.` });
+}

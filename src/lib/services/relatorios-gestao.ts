@@ -17,6 +17,7 @@ export interface Filtros { cliente?: string | null; placa?: string | null; condu
 
 export const RELATORIOS = {
   faturamento: "Faturamento por cliente",
+  "consultas-api": "Consultas por API",
   multas: "Multas em aberto",
   ranking: "Ranking de condutores",
   condutores: "Condutores",
@@ -96,6 +97,21 @@ export async function rankingCondutores(db: Db, f: Filtros, limite = 10) {
     .map((l: any, i: number) => ({ posicao: i + 1, ...l }));
 }
 
+/** Provedor de cada fonte: as várias bases da Infosimples somam como "Infosimples". */
+export const SQL_PROVEDOR = `case when q.fonte_id = 'directdata' then 'Direct Data' when q.fonte_id like 'infosimples%' then 'Infosimples' else coalesce(f.nome, q.fonte_id) end`;
+
+/** Consultas e custo por API (Direct Data, Infosimples) no mês, para conferir com a fatura de cada fornecedor. */
+export async function consultasPorApi(db: Db, mes: string, cliente?: string | null) {
+  return db.q<{ provedor: string; consultas: number; ok: number; erros: number; custo: number; placas: number }>(
+    `select ${SQL_PROVEDOR} as provedor, count(*)::int as consultas, count(*) filter (where q.resultado = 'ok')::int as ok,
+            count(*) filter (where q.resultado <> 'ok')::int as erros, coalesce(sum(q.custo),0)::int as custo, count(distinct q.placa_id)::int as placas
+       from consultas q left join fontes f on f.id = q.fonte_id
+      where to_char(q.data at time zone 'America/Sao_Paulo','YYYY-MM') = $1 and q.fonte_id is not null and ($2::uuid is null or q.cliente_id = $2)
+      group by 1 order by custo desc`,
+    [mes, cliente || null],
+  );
+}
+
 export async function gerarRelatorioGestao(db: Db, tipo: TipoRelatorio, f: Filtros): Promise<Tabela> {
   const hoje = hojeISO();
   const mes = f.mes && /^\d{4}-\d{2}$/.test(f.mes) ? f.mes : hoje.slice(0, 7);
@@ -114,6 +130,21 @@ export async function gerarRelatorioGestao(db: Db, tipo: TipoRelatorio, f: Filtr
     return { titulo, descricao: `Mês ${mes}: mensalidades proporcionais, saving sobre a economia comprovada, conveniência e defesa.`, linhas,
       colunas: [c("cliente", "Cliente"), c("documento", "CPF/CNPJ"), c("ciclo", "Fechamento"), c("forma", "Pagamento"), c("placas", "Placas", "num"), c("mensalidades", "Mensalidades", "brl"),
         c("economia", "Economia comprovada", "brl"), c("saving", "Saving", "brl"), c("conveniencia", "Conveniência", "brl"), c("defesa", "Defesa", "brl"), c("total", "Faturamento", "brl")] };
+  }
+
+  if (tipo === "consultas-api") {
+    const linhas = await db.q(
+      `select ${SQL_PROVEDOR} as provedor, coalesce(f.nome, q.fonte_id) as servico, cl.nome as cliente,
+              count(*)::int as consultas, count(*) filter (where q.resultado = 'ok')::int as ok, count(*) filter (where q.resultado <> 'ok')::int as erros,
+              coalesce(sum(q.custo),0)::int as custo, round(coalesce(avg(q.custo),0))::int as medio
+         from consultas q left join fontes f on f.id = q.fonte_id join clientes cl on cl.id = q.cliente_id
+        where to_char(q.data at time zone 'America/Sao_Paulo','YYYY-MM') = $1 and q.fonte_id is not null and ($2::uuid is null or q.cliente_id = $2)
+        group by 1, 2, 3 order by 1, custo desc`,
+      [mes, f.cliente || null],
+    );
+    return { titulo, descricao: `Mês ${mes}: quantas consultas foram feitas em cada API e quanto custaram, por base e por cliente. Consultas com erro normalmente não são cobradas pela fonte.`, linhas,
+      colunas: [c("provedor", "API"), c("servico", "Base"), c("cliente", "Cliente"), c("consultas", "Consultas", "num"), c("ok", "Com sucesso", "num"), c("erros", "Com erro", "num"),
+        c("custo", "Custo", "brl"), c("medio", "Custo médio", "brl")] };
   }
 
   if (tipo === "multas") {

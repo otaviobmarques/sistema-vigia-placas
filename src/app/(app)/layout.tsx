@@ -1,3 +1,4 @@
+import { placasParaReprocessar } from "@/lib/services/reprocessamento";
 import Link from "next/link";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
@@ -24,6 +25,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   // Selo "Novas": multas que chegaram nas últimas 24 h (da carteira, para a equipe; do cliente, para ele).
   const nNovasEquipe = s.nivel !== "cliente"
     ? Number((await noEscopo(s, (db) => db.one("select count(*) as n from multas m join clientes c on c.id = m.cliente_id where m.criado_em > now() - interval '24 hours' and m.estado not in ('paga','cancelada') and c.excluido_em is null")))?.n ?? 0)
+    : 0;
+  // Placas que precisam de reprocessamento (erro, paradas na fila ou última consulta falhou), para a equipe.
+  const nReprocessar = s.nivel !== "cliente"
+    ? (await noEscopo(s, (db) => placasParaReprocessar(db))).filter((p) => p.motivo !== "na_fila").length
     : 0;
   const nNovasCliente = s.clienteId
     ? Number((await noEscopo(s, (db) => db.one("select count(*) as n from multas where cliente_id = $1 and criado_em > now() - interval '24 hours' and estado not in ('paga','cancelada')", [s.clienteId])))?.n ?? 0)
@@ -54,6 +59,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     { href: "/gestao/multas", rotulo: "Multas em aberto", n: nNovasEquipe || undefined, novas: true },
     { href: "/placas/nova", rotulo: "Cadastrar placa" },
     { href: "/placas/importar", rotulo: "Importar placas" },
+    { href: "/gestao/reprocessamento", rotulo: "Reprocessamento de placas", n: nReprocessar || undefined },
     { href: "/solicitacoes", rotulo: "Solicitações de placas", n: nSolicitacoes || undefined },
     { href: "/financeiro", rotulo: "Financeiro" },
     { href: "/gestao/relatorios", rotulo: "Relatórios" },

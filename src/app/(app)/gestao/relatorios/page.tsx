@@ -8,7 +8,7 @@ import { ehRelatorio, gerarRelatorioGestao, RELATORIOS, type TipoRelatorio } fro
 export const metadata = { title: "Relatórios" };
 
 const GRUPOS: Array<{ titulo: string; icone: string; itens: Array<{ tipo: TipoRelatorio; desc: string }> }> = [
-  { titulo: "Financeiro", icone: "💰", itens: [{ tipo: "faturamento", desc: "Mensalidade, saving e total por cliente" }] },
+  { titulo: "Financeiro", icone: "💰", itens: [{ tipo: "faturamento", desc: "Mensalidade, saving e total por cliente" }, { tipo: "consultas-api", desc: "Direct Data e Infosimples: quantidade e custo" }] },
   { titulo: "Multas", icone: "🚨", itens: [{ tipo: "multas", desc: "Em aberto, da mais urgente à menos" }] },
   { titulo: "Condutores", icone: "🪪", itens: [
     { tipo: "ranking", desc: "Quem mais leva multa" },
@@ -61,7 +61,7 @@ export default async function RelatoriosGestao({ searchParams }: { searchParams:
         <form className="mb-4 flex flex-wrap items-end gap-2">
           <input type="hidden" name="tipo" value={tipo} />
           <div><label className="rotulo">Cliente</label><select name="cliente" defaultValue={sp.cliente ?? ""} className="campo w-64"><option value="">Todos os clientes</option>{clientes.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}</select></div>
-          {tipo === "faturamento" && <div><label className="rotulo">Mês</label><input type="month" name="mes" defaultValue={mes} className="campo w-44" /></div>}
+          {(tipo === "faturamento" || tipo === "consultas-api") && <div><label className="rotulo">Mês</label><input type="month" name="mes" defaultValue={mes} className="campo w-44" /></div>}
           {(tipo === "placas" || tipo === "multas") && <div><label className="rotulo">Placa</label><input name="placa" defaultValue={sp.placa ?? ""} placeholder="ABC1D23" className="campo w-36 uppercase" /></div>}
           <button className="btn-contorno">Filtrar</button>
           {(sp.cliente || sp.placa) && <Link href={`?tipo=${tipo}`} className="btn-leve">Limpar</Link>}
