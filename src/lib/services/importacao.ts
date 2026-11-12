@@ -28,7 +28,9 @@ export function lerPlanilha(buf: ArrayBuffer): Record<string, string>[] {
   return rows.map((r) => {
     const o: Record<string, string> = {};
     for (const [k, v] of Object.entries(r)) {
-      o[k.toString().trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, "_")] = String(v ?? "").trim();
+      const chave = k.toString().trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+      // "cliente (CNPJ ou CPF)", "cnpj", "cpf_cnpj"… tudo vira a coluna "cliente".
+      o[/^(cliente|cnpj|cpf)/.test(chave) ? "cliente" : chave] = String(v ?? "").trim();
     }
     return o;
   });
@@ -44,10 +46,12 @@ export async function validarLinhas(db: Db, rows: Record<string, string>[], clie
   return rows.map((r, i) => {
     const erros: string[] = [];
     const doc = somenteDocumento(r.cliente ?? r.cpf_cnpj ?? "");
-    let cli = doc ? porDoc.get(doc) ?? null : null;
-    if (doc && !cli) erros.push("Cliente não encontrado na sua carteira");
+    // O Excel apaga zeros à esquerda quando o documento vira número: tenta também com 11 (CPF) e 14 (CNPJ) dígitos.
+    const candidatos = /^\d+$/.test(doc) ? [doc, doc.padStart(11, "0"), doc.padStart(14, "0")] : [doc];
+    let cli = doc ? candidatos.map((d) => porDoc.get(d)).find(Boolean) ?? null : null;
+    if (doc && !cli) erros.push(/[A-Z]{3}/.test(doc) && !/^[0-9A-Z]{14}$/.test(doc) ? "Use o CNPJ ou CPF do cliente, não o nome" : "CNPJ/CPF não encontrado na sua carteira");
     if (!doc && clientePadraoId) cli = clientes.find((c) => c.id === clientePadraoId) ?? null;
-    if (!cli && !doc) erros.push("Informe o CPF/CNPJ do cliente");
+    if (!cli && !doc) erros.push("Informe o CNPJ ou CPF do cliente");
 
     const pv = validarPlaca(r.placa ?? "");
     const placa = pv.ok ? pv.placa : (r.placa ?? "").toUpperCase();
@@ -82,11 +86,28 @@ export async function validarLinhas(db: Db, rows: Record<string, string>[], clie
 
 export function modeloPlanilha(): Buffer {
   const ws = XLSX.utils.aoa_to_sheet([
-    [...COLUNAS],
+    ["cliente (CNPJ ou CPF)", ...COLUNAS.slice(1)],
     ["11.222.333/0001-81", "ABC1D23", "01234567897", "MG", "Caminhão 01", "Frota BH", "Logística", "Carlos Souza"],
+    ["123.456.789-09", "BRA2E19", "98765432100", "SP", "Moto 01", "", "", ""],
   ]);
-  ws["!cols"] = COLUNAS.map(() => ({ wch: 20 }));
+  ws["!cols"] = [{ wch: 24 }, ...COLUNAS.slice(1).map(() => ({ wch: 18 }))];
+  const instrucoes = XLSX.utils.aoa_to_sheet([
+    ["Coluna", "Obrigatória", "Como preencher"],
+    ["cliente (CNPJ ou CPF)", "Sim*", "CNPJ ou CPF do cliente, igual ao do cadastro no Vigia Placa. Com ou sem pontuação. Não use o nome."],
+    ["placa", "Sim", "Placa no formato antigo (ABC1234) ou Mercosul (ABC1D23)."],
+    ["renavam", "Sim", "Renavam do veículo (até 11 dígitos)."],
+    ["uf", "Não", "Estado de emplacamento (ex.: MG, SP). Padrão: MG."],
+    ["apelido", "Não", "Como a frota chama o veículo (ex.: Caminhão 01)."],
+    ["grupo", "Não", "Agrupamento livre (ex.: Frota BH)."],
+    ["centro_custo", "Não", "Centro de custo para os relatórios."],
+    ["condutor_principal", "Não", "Nome do condutor principal."],
+    [],
+    ["* Quando o próprio cliente sobe a planilha no portal, a coluna cliente pode ficar em branco: as placas vão para a frota dele."],
+    ["Apague as linhas de exemplo antes de enviar."],
+  ]);
+  instrucoes["!cols"] = [{ wch: 24 }, { wch: 12 }, { wch: 90 }];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "placas");
+  XLSX.utils.book_append_sheet(wb, instrucoes, "instruções");
   return XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
 }

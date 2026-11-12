@@ -10,7 +10,7 @@ export default async function Importar() {
     <>
       <Cabecalho
         titulo="Importar placas em lote"
-        sub={s.clienteId && s.nivel === "cliente" ? "Suba a planilha com as suas placas." : "Suba a planilha com as placas de um ou de vários clientes. A coluna “cliente” (CPF/CNPJ) distribui cada placa para a conta certa."}
+        sub={s.clienteId && s.nivel === "cliente" ? "Suba a planilha com as suas placas." : "Suba a planilha com as placas de um ou de vários clientes. A coluna “cliente” (CNPJ ou CPF, não o nome) distribui cada placa para a conta certa."}
       />
       <Importador clienteFoco={s.clienteNome} />
     </>
