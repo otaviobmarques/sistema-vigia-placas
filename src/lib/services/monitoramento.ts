@@ -216,15 +216,16 @@ export async function consultarPlaca(db: Db, placaId: string, opts: { avulsa?: b
 }
 
 /** Varredura agendada: consulta as placas vencidas, marca multas vencidas e dispara avisos de prazo. */
-export async function varredura(db: Db, limite = 200) {
+export async function varredura(db: Db, limite = 200, opts: { enfileirar?: (ids: string[]) => Promise<unknown>; custoEstimado?: number } = {}) {
   const hoje = hojeISO();
   const devidas = await db.q<{ id: string }>(
-    `select id from placas where status in ('ativa','aguardando') and (proxima_verificacao is null or proxima_verificacao <= $1)
+    `select id from placas where status in ('ativa','aguardando','erro') and (proxima_verificacao is null or proxima_verificacao <= $1)
        and cliente_id in (select id from clientes where bloqueado_em is null and excluido_em is null)
      order by proxima_verificacao nulls first limit $2`,
     [hoje, limite],
   );
   let novas = 0, erros = 0, adiadas = 0;
+  const enfileirar: string[] = [];
   const gastoMes = new Map<string, { gasto: number; teto: number | null }>();
   for (const p of devidas) {
     // Teto de gasto do cliente: atingido, a placa só é consultada se estiver em período de risco; senão fica para daqui a 7 dias.
@@ -244,6 +245,12 @@ export async function varredura(db: Db, limite = 200) {
         }
       }
     }
+    if (opts.enfileirar) {
+      // A consulta roda em outra execução: conta o custo estimado para o teto do cliente.
+      if (info?.teto_dados_mensal && gastoMes.has(info.cliente_id)) gastoMes.get(info.cliente_id)!.gasto += opts.custoEstimado ?? 0;
+      enfileirar.push(p.id);
+      continue;
+    }
     const antes = Number((await db.one("select coalesce(sum(custo),0) as v from consultas where placa_id = $1", [p.id]))?.v ?? 0);
     const r = await consultarPlaca(db, p.id);
     if (info?.teto_dados_mensal && gastoMes.has(info.cliente_id)) {
@@ -258,10 +265,11 @@ export async function varredura(db: Db, limite = 200) {
        and estado in ('notificada','condutor_indicado','reconhecida_sne','penalidade')`,
     [hoje],
   );
+  if (opts.enfileirar && enfileirar.length) await opts.enfileirar(enfileirar);
   const avisos = await dispararAvisos(db);
   const resumo = await resumoDiarioEquipe(db);
   const despacho = await despacharOutbox(db);
-  return { placas: devidas.length, novas, erros, adiadas, avisos, resumo, push: despacho.enviados };
+  return { placas: devidas.length, enfileiradas: enfileirar.length, novas, erros, adiadas, avisos, resumo, push: despacho.enviados };
 }
 
 export async function dispararAvisos(db: Db) {

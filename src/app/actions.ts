@@ -18,6 +18,7 @@ import { GRAVIDADES, type Gravidade } from "@/lib/domain/ctb";
 import { tipoDocumento, somenteDocumento, validarPlaca, validarRenavam } from "@/lib/domain/validators";
 import { adicionarAoCarrinho, aprovarPagamento, cancelarPagamento, confirmarPagamento, criarPagamento } from "@/lib/services/pagamentos";
 import { consultarPlaca, varredura } from "@/lib/services/monitoramento";
+import { enfileirarConsultas } from "@/lib/services/fila-consultas";
 import { indicarCondutor, aceitarIndicacao, protocolarIndicacao } from "@/lib/services/indicacao";
 import { pedirDefesa, atualizarDefesa } from "@/lib/services/defesa";
 import { fecharMes } from "@/lib/services/faturamento";
@@ -37,11 +38,7 @@ const despacharDepois = () => after(() => sistema((db) => despacharOutbox(db)).t
  * Primeira consulta de placas recém-cadastradas, depois da resposta: as fontes externas podem levar minutos
  * e o formulário não pode ficar parado esperando. Falhas ficam para a varredura diária.
  */
-const consultarDepois = (ids: string[]) =>
-  after(async () => {
-    for (const id of ids) await sistema((db) => consultarPlaca(db, id)).catch((e) => console.error("primeira consulta falhou", id, e?.message ?? e));
-    await sistema((db) => despacharOutbox(db)).catch(() => undefined);
-  });
+const consultarDepois = (ids: string[]) => after(() => enfileirarConsultas(ids).then(() => undefined));
 const ir = (path: string, msg?: { ok?: string; erro?: string }): never => {
   const q = msg?.ok ? `ok=${encodeURIComponent(msg.ok)}` : msg?.erro ? `erro=${encodeURIComponent(msg.erro)}` : "";
   redirect(q ? `${path}${path.includes("?") ? "&" : "?"}${q}` : path);
