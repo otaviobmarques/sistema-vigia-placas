@@ -33,6 +33,15 @@ import { normalizarFrequencia } from "@/lib/domain/monitoramento";
 const s = (f: FormData, k: string) => String(f.get(k) ?? "").trim();
 /** Envia as notificações push da fila logo depois de responder ao usuário. */
 const despacharDepois = () => after(() => sistema((db) => despacharOutbox(db)).then(() => undefined, () => undefined));
+/**
+ * Primeira consulta de placas recém-cadastradas, depois da resposta: as fontes externas podem levar minutos
+ * e o formulário não pode ficar parado esperando. Falhas ficam para a varredura diária.
+ */
+const consultarDepois = (ids: string[]) =>
+  after(async () => {
+    for (const id of ids) await sistema((db) => consultarPlaca(db, id)).catch((e) => console.error("primeira consulta falhou", id, e?.message ?? e));
+    await sistema((db) => despacharOutbox(db)).catch(() => undefined);
+  });
 const ir = (path: string, msg?: { ok?: string; erro?: string }): never => {
   const q = msg?.ok ? `ok=${encodeURIComponent(msg.ok)}` : msg?.erro ? `erro=${encodeURIComponent(msg.erro)}` : "";
   redirect(q ? `${path}${path.includes("?") ? "&" : "?"}${q}` : path);
@@ -287,10 +296,9 @@ export async function cadastrarPlacaEquipe(f: FormData) {
   } catch (e: any) {
     ir(volta, { erro: String(e.message).includes("placas_unica_ativa") ? "Esta placa já está ativa em outro cliente." : String(e.message).includes("duplicate") ? "Esta placa já está cadastrada neste cliente." : e.message });
   }
-  const r = await sistema((db) => consultarPlaca(db, id!));
-  despacharDepois();
+  consultarDepois([id!]);
   revalidatePath("/", "layout");
-  ir(volta, { ok: `Placa ${(pv as any).placa} cadastrada e consultada: ${r.total} multa(s) encontrada(s). Pode lançar a próxima.` });
+  ir(volta, { ok: `Placa ${(pv as any).placa} cadastrada. A primeira consulta já está rodando e as multas aparecem em alguns minutos. Pode lançar a próxima.` });
 }
 
 export async function adicionarPlaca(f: FormData) {
@@ -312,11 +320,10 @@ export async function adicionarPlaca(f: FormData) {
   } catch (e: any) {
     ir("/placas", { erro: String(e.message).includes("placas_unica_ativa") ? "Esta placa já está ativa em outro cliente." : e.message });
   }
-  // Primeira varredura gratuita.
-  const r = await sistema((db) => consultarPlaca(db, id!));
-  despacharDepois();
+  // Primeira varredura gratuita, depois da resposta.
+  consultarDepois([id!]);
   revalidatePath("/", "layout");
-  ir("/placas", { ok: `Placa cadastrada e consultada: ${r.total} multa(s) encontrada(s).` });
+  ir("/placas", { ok: "Placa cadastrada. A primeira consulta já está rodando e as multas aparecem em alguns minutos." });
 }
 
 // ---------------- Solicitações de placa (cliente pede, equipe Vigia Placa aprova) ----------------
@@ -390,8 +397,8 @@ async function decidirSolicitacao(f: FormData, aprovar: boolean) {
     await enfileirar(db, { clienteId: r.cliente_id, canal: "email", destino: c?.email, assunto: texto, corpo: texto });
     if ((c?.alertas_canais ?? []).includes("push")) await enfileirar(db, { clienteId: r.cliente_id, canal: "push", destino: r.cliente_id, assunto: "Placas", corpo: texto, url: "/placas" });
   });
-  if (novaPlaca) await sistema((db) => consultarPlaca(db, novaPlaca!));
-  despacharDepois();
+  if (novaPlaca) consultarDepois([novaPlaca]);
+  else despacharDepois();
   revalidatePath("/", "layout");
   ir("/solicitacoes", { ok: texto });
 }
@@ -477,11 +484,9 @@ export async function importarPlacas(f: FormData) {
     }
     await auditar(db, { usuarioId: sessao.usuarioId, acao: "importacao_lote", entidade: "placas", dados: { importadas: ids.length } });
   });
-  let multas = 0;
-  for (const id of ids) multas += (await sistema((db) => consultarPlaca(db, id))).total;
-  despacharDepois();
+  consultarDepois(ids);
   revalidatePath("/", "layout");
-  ir(sessao.nivel === "cliente" || sessao.clienteId ? "/placas" : "/carteira", { ok: `${ids.length} placas importadas. Primeira varredura feita: ${multas} multa(s) encontrada(s).` });
+  ir(sessao.nivel === "cliente" || sessao.clienteId ? "/placas" : "/carteira", { ok: `${ids.length} placas importadas. A primeira varredura já está rodando e as multas aparecem em alguns minutos.` });
 }
 
 // ---------------- Condutores ----------------
@@ -903,8 +908,7 @@ export async function criarCliente(f: FormData) {
       erros.push(`${pl}: já ativa em outro cliente`);
     }
   }
-  for (const pid of ids) await sistema((db) => consultarPlaca(db, pid));
-  despacharDepois();
+  consultarDepois(ids);
   await escolherCliente(id!);
   redirect(`/bem-vindo${erros.length ? `?erro=${encodeURIComponent("Atenção: " + erros.join("; "))}` : ""}`);
 }

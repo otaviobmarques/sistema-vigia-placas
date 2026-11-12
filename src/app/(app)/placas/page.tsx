@@ -11,6 +11,7 @@ import { listarCondutores } from "@/lib/services/condutores";
 import { PodeDirigir } from "@/components/condutor";
 import { CamposCondutorRapido } from "@/components/condutor-rapido";
 import { LeitorDocumento } from "@/components/leitor-documento";
+import { BotaoEnviar } from "@/components/botao-enviar";
 import { leitorAtivo } from "@/lib/integrations/leitor";
 
 export const metadata = { title: "Placas" };
@@ -72,7 +73,7 @@ export default async function Placas({ searchParams }: { searchParams: Promise<{
           <div><label className="rotulo">Apelido</label><input name="apelido" className="campo" /></div>
           <div><label className="rotulo">Grupo</label><input name="grupo" className="campo" /></div>
           <div><label className="rotulo">Adesão ao SNE</label><input name="sne" type="date" className="campo" /></div>
-          <div className="flex items-end"><button className="btn-primario w-full">{ehCliente ? "Solicitar inclusão" : "Cadastrar e consultar"}</button></div>
+          <div className="flex items-end"><BotaoEnviar className="btn-primario w-full" enviando={ehCliente ? "Enviando…" : "Cadastrando…"}>{ehCliente ? "Solicitar inclusão" : "Cadastrar e consultar"}</BotaoEnviar></div>
         </form>
         <p className="mt-2 text-xs text-suave">{ehCliente ? "A equipe Vigia Placa confere os dados e aprova. Na aprovação, a placa entra no monitoramento, a primeira varredura é feita na hora e você recebe um aviso." : "A primeira varredura é gratuita: mostra as multas em aberto e o dinheiro na mesa. Sem certificado digital, só placa e Renavam."}</p>
       </Card>}
