@@ -865,6 +865,13 @@ export async function criarCliente(f: FormData) {
          ehAdminSistema(sessao) ? lerFrequencia(f, "frequencia") ?? "adaptativa" : normalizarFrequencia((await db.one("select frequencia from planos where id = $1", [s(f, "plano")]))?.frequencia),
          ip, cfg!.termo_versao, novoId],
       );
+      const grupoNovo = s(f, "grupo_novo").replace(/\s+/g, " ");
+      let grupoId = s(f, "grupo_id") || null;
+      if (grupoNovo.length >= 2) {
+        grupoId = (await db.one<{ id: string }>("select id from grupos_economicos where lower(nome) = lower($1)", [grupoNovo]))?.id ?? null;
+        if (!grupoId) { grupoId = randomUUID(); await db.q("insert into grupos_economicos (id, nome) values ($1, $2)", [grupoId, grupoNovo]); }
+      }
+      if (grupoId) await db.q("update clientes set grupo_id = $2 where id = $1", [novoId, grupoId]);
       if (preco) {
         await db.q(
           "update clientes set preco_placa_personalizado = $2, saving_bps_personalizado = $3, preco_defesa_personalizado = $4, taxa_conv_tipo_personalizado = $5, taxa_conv_valor_personalizado = $6 where id = $1",
@@ -1150,4 +1157,51 @@ export async function corrigirEReprocessarPlaca(f: FormData) {
   await reprocessar(sessao, [id]);
   revalidatePath("/", "layout");
   ir(VOLTA_REPROC, { ok: `Placa ${(pv as any).placa} corrigida e enviada para nova consulta.` });
+}
+
+// ---------------- Grupos econômicos (vários CNPJs da mesma empresa) ----------------
+
+const VOLTA_GRUPOS = "/gestao/grupos";
+
+export async function salvarGrupo(f: FormData) {
+  const sessao = await exigirSessao(["franqueadora", "franqueado"]);
+  const id = s(f, "id") || null;
+  const nome = s(f, "nome").replace(/\s+/g, " ");
+  const obs = s(f, "observacao") || null;
+  const clientes = f.getAll("cliente").map(String).filter((x) => /^[0-9a-f-]{36}$/i.test(x));
+  if (nome.length < 2) ir(VOLTA_GRUPOS, { erro: "Dê um nome ao grupo." });
+  try {
+    await noEscopo(sessao, async (db) => {
+      let gid = id;
+      if (gid) {
+        const r = await db.q("update grupos_economicos set nome = $2, observacao = $3 where id = $1 returning id", [gid, nome, obs]);
+        if (!r.length) throw new Error("Grupo não encontrado.");
+        await db.q("update clientes set grupo_id = null where grupo_id = $1 and not (id = any($2::uuid[]))", [gid, clientes]);
+      } else {
+        gid = randomUUID();
+        await db.q("insert into grupos_economicos (id, nome, observacao) values ($1, $2, $3)", [gid, nome, obs]);
+      }
+      if (clientes.length) await db.q("update clientes set grupo_id = $1 where id = any($2::uuid[]) and excluido_em is null", [gid, clientes]);
+      await auditar(db, { usuarioId: sessao.usuarioId, acao: id ? "grupo_alterado" : "grupo_criado", entidade: "grupo_economico", entidadeId: gid!, dados: { nome, clientes: clientes.length } });
+    });
+  } catch (e: any) {
+    ir(id ? `${VOLTA_GRUPOS}?editar=${id}` : VOLTA_GRUPOS, { erro: /grupos_economicos_nome|duplicate/.test(String(e.message)) ? "Já existe um grupo com este nome." : e.message });
+  }
+  revalidatePath("/", "layout");
+  ir(VOLTA_GRUPOS, { ok: `“${nome}” salvo com ${clientes.length} cliente(s).` });
+}
+
+export async function excluirGrupo(f: FormData) {
+  const sessao = await exigirSessao(["franqueadora", "franqueado"]);
+  const id = s(f, "id");
+  const nome = await noEscopo(sessao, async (db) => {
+    const g = await db.one<{ nome: string }>("select nome from grupos_economicos where id = $1", [id]);
+    if (!g) return null;
+    await db.q("update clientes set grupo_id = null where grupo_id = $1", [id]);
+    await db.q("delete from grupos_economicos where id = $1", [id]);
+    await auditar(db, { usuarioId: sessao.usuarioId, acao: "grupo_excluido", entidade: "grupo_economico", entidadeId: id, dados: { nome: g.nome } });
+    return g.nome;
+  });
+  revalidatePath("/", "layout");
+  ir(VOLTA_GRUPOS, nome ? { ok: `“${nome}” excluído. Os clientes continuam cadastrados.` } : { erro: "Grupo não encontrado." });
 }

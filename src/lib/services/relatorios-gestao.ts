@@ -5,19 +5,24 @@
 import * as XLSX from "xlsx";
 import type { Db } from "../db";
 import { hojeISO, somarDias } from "../domain/dates";
-import { CICLOS, type Ciclo } from "../domain/ciclo";
+import { CICLOS, type Ciclo, type Periodo } from "../domain/ciclo";
+import { textoPeriodo, type TipoPeriodo } from "../domain/periodo";
 import { calcularFatura } from "./faturamento";
 import { listarCondutores } from "./condutores";
-import { ESTADOS, type EstadoMulta } from "../domain/ctb";
+import { ESTADOS, melhorValorHoje, pagavel, valoresMulta, type EstadoMulta } from "../domain/ctb";
+import { regra, SELECT_MULTA, type MultaRow } from "./multas";
 
 export type TipoColuna = "texto" | "num" | "brl" | "data";
 export interface Coluna { chave: string; rotulo: string; tipo: TipoColuna }
 export interface Tabela { titulo: string; descricao: string; colunas: Coluna[]; linhas: Record<string, string | number | null>[] }
-export interface Filtros { cliente?: string | null; placa?: string | null; condutor?: string | null; mes?: string | null; novas?: boolean }
+export interface Filtros { periodo?: Periodo | null; cliente?: string | null; grupo?: string | null; placa?: string | null; condutor?: string | null; mes?: string | null; novas?: boolean }
 
 export const RELATORIOS = {
   faturamento: "Faturamento por cliente",
-  "consultas-api": "Consultas por API",
+  "consultas-api": "Custo por API",
+  "multas-pagar": "Multas a pagar",
+  "valores-multas": "Valor das multas (cheio, desconto e a pagar)",
+  "ranking-placas": "Ranking de placas com mais multas",
   multas: "Multas em aberto",
   ranking: "Ranking de condutores",
   condutores: "Condutores",
@@ -27,15 +32,46 @@ export const RELATORIOS = {
   placas: "Lista de veículos",
 } as const;
 export type TipoRelatorio = keyof typeof RELATORIOS;
+
+/** Relatórios com período e o padrão de cada um (os demais mostram a situação atual). */
+export const PERIODO_DO_RELATORIO: Partial<Record<TipoRelatorio, { padrao: TipoPeriodo; data: string; aceitaTudo: boolean }>> = {
+  faturamento: { padrao: "mes", data: "competência", aceitaTudo: false },
+  "consultas-api": { padrao: "mes", data: "data da consulta", aceitaTudo: true },
+  multas: { padrao: "tudo", data: "data da infração", aceitaTudo: true },
+  "multas-pagar": { padrao: "tudo", data: "vencimento", aceitaTudo: true },
+  "valores-multas": { padrao: "tudo", data: "data da infração", aceitaTudo: true },
+  "ranking-placas": { padrao: "ano", data: "data da infração", aceitaTudo: true },
+};
+
+/** Condição SQL de período sobre uma coluna de data. */
+function noPeriodo(f: Filtros, params: unknown[], col: string): string {
+  if (!f.periodo) return "";
+  params.push(f.periodo.inicio, f.periodo.fim);
+  return ` and ${col} between $${params.length - 1} and $${params.length}`;
+}
 export const ehRelatorio = (v: string): v is TipoRelatorio => v in RELATORIOS;
 
 const FORMA: Record<string, string> = { pix: "Pix", boleto: "Boleto", cartao: "Cartão" };
 const c = (chave: string, rotulo: string, tipo: TipoColuna = "texto"): Coluna => ({ chave, rotulo, tipo });
 
+/** Filtro "Geral / Cliente / Grupo econômico" sobre uma coluna que guarda o id do cliente. */
+function porCliente(f: Filtros, params: unknown[], col: string): string {
+  if (f.cliente) { params.push(f.cliente); return ` and ${col} = $${params.length}`; }
+  if (f.grupo) { params.push(f.grupo); return ` and ${col} in (select id from clientes where grupo_id = $${params.length})`; }
+  return "";
+}
+
+/** Colunas que entram na linha de total (tela e Excel): valores e quantidades, menos posição, médias e dias. */
+export const somavel = (col: Coluna) => (col.tipo === "brl" || col.tipo === "num") && !/^(posicao|medio|dias)$/.test(col.chave);
+
+const SQL_GRUPO = "(select g.nome from grupos_economicos g where g.id = c.grupo_id)";
+
 async function clientesDoFiltro(db: Db, f: Filtros) {
-  return db.q<{ id: string; nome: string; documento: string; ciclo_fechamento: string; forma_cobranca: string; bloqueado_em: string | null }>(
-    `select id, nome, documento, ciclo_fechamento, forma_cobranca, bloqueado_em from clientes where ativo and excluido_em is null ${f.cliente ? "and id = $1" : ""} order by nome`,
-    f.cliente ? [f.cliente] : [],
+  const params: unknown[] = [];
+  return db.q<{ id: string; nome: string; documento: string; ciclo_fechamento: string; forma_cobranca: string; bloqueado_em: string | null; grupo: string | null }>(
+    `select c.id, c.nome, c.documento, c.ciclo_fechamento, c.forma_cobranca, c.bloqueado_em, ${SQL_GRUPO} as grupo
+       from clientes c where c.ativo and c.excluido_em is null${porCliente(f, params, "c.id")} order by c.nome`,
+    params,
   );
 }
 
@@ -50,7 +86,8 @@ async function todosCondutores(db: Db, f: Filtros) {
 export async function multasEmAberto(db: Db, f: Filtros) {
   const params: unknown[] = [];
   const cond: string[] = ["m.estado not in ('paga','cancelada')", "c.excluido_em is null"];
-  if (f.cliente) { params.push(f.cliente); cond.push(`m.cliente_id = $${params.length}`); }
+  const pc = porCliente(f, params, "m.cliente_id"); if (pc) cond.push(pc.slice(5));
+  const pp = noPeriodo(f, params, "m.data_infracao"); if (pp) cond.push(pp.slice(5));
   if (f.placa) { params.push(`%${f.placa.replace(/[^A-Za-z0-9]/g, "").toUpperCase()}%`); cond.push(`p.placa like $${params.length}`); }
   if (f.novas) cond.push("m.criado_em > now() - interval '24 hours'");
   if (f.condutor) {
@@ -58,7 +95,7 @@ export async function multasEmAberto(db: Db, f: Filtros) {
     cond.push(`(m.condutor_id = $${params.length} or exists (select 1 from placa_condutores pc where pc.placa_id = m.placa_id and pc.condutor_id = $${params.length}))`);
   }
   return db.q(
-    `select m.id, m.cliente_id, m.criado_em, c.nome as cliente, p.placa, p.apelido, m.descricao, m.gravidade, m.pontos, m.valor, m.estado, m.data_infracao,
+    `select m.id, m.cliente_id, m.criado_em, c.nome as cliente, ${SQL_GRUPO} as grupo, p.placa, p.apelido, m.descricao, m.gravidade, m.pontos, m.valor, m.estado, m.data_infracao,
             o.nome as orgao, m.vencimento, m.notificada_em, (m.notificada_em + 30) as prazo_indicacao,
             least(m.vencimento, case when m.condutor_id is null and m.notificada_em is not null then m.notificada_em + 30 end) as prazo,
             cd.nome as condutor_indicado,
@@ -76,8 +113,7 @@ export async function multasEmAberto(db: Db, f: Filtros) {
 export async function rankingCondutores(db: Db, f: Filtros, limite = 10) {
   const desde = somarDias(hojeISO(), -365);
   const params: unknown[] = [desde, limite];
-  let filtro = "";
-  if (f.cliente) { params.push(f.cliente); filtro = `and c.id = $${params.length}`; }
+  const filtro = porCliente(f, params, "c.id");
   const linhas = await db.q(
     `select k.nome as condutor, c.nome as cliente,
        (select count(*) from multas m where m.condutor_id = k.id and m.data_infracao >= $1) as indicadas,
@@ -120,31 +156,98 @@ export async function gerarRelatorioGestao(db: Db, tipo: TipoRelatorio, f: Filtr
   if (tipo === "faturamento") {
     const linhas = [];
     for (const cl of await clientesDoFiltro(db, f)) {
-      const x = await calcularFatura(db, cl.id, mes);
+      const x = await calcularFatura(db, cl.id, f.periodo ?? mes);
       linhas.push({
-        cliente: cl.nome, documento: cl.documento, ciclo: (CICLOS[cl.ciclo_fechamento as Ciclo] ?? "Mensal").split(" (")[0], forma: FORMA[cl.forma_cobranca] ?? cl.forma_cobranca,
+        cliente: cl.nome, grupo: cl.grupo, documento: cl.documento, ciclo: (CICLOS[cl.ciclo_fechamento as Ciclo] ?? "Mensal").split(" (")[0], forma: FORMA[cl.forma_cobranca] ?? cl.forma_cobranca,
         placas: x.placas, mensalidades: x.mensalidades, economia: x.baseSaving, saving: x.saving, conveniencia: x.conveniencia, defesa: x.defesa, total: x.total + x.conveniencia,
       });
     }
     linhas.sort((a, b) => b.total - a.total);
-    return { titulo, descricao: `Mês ${mes}: mensalidades proporcionais, saving sobre a economia comprovada, conveniência e defesa.`, linhas,
-      colunas: [c("cliente", "Cliente"), c("documento", "CPF/CNPJ"), c("ciclo", "Fechamento"), c("forma", "Pagamento"), c("placas", "Placas", "num"), c("mensalidades", "Mensalidades", "brl"),
-        c("economia", "Economia comprovada", "brl"), c("saving", "Saving", "brl"), c("conveniencia", "Conveniência", "brl"), c("defesa", "Defesa", "brl"), c("total", "Faturamento", "brl")] };
+    const colunas = [c("cliente", "Cliente"), c("grupo", "Grupo econômico"), c("documento", "CPF/CNPJ"), c("ciclo", "Fechamento"), c("forma", "Pagamento"), c("placas", "Placas", "num"), c("mensalidades", "Mensalidades", "brl"),
+        c("economia", "Economia comprovada", "brl"), c("saving", "Saving", "brl"), c("conveniencia", "Conveniência", "brl"), c("defesa", "Defesa", "brl"), c("total", "Faturamento", "brl")];
+    return { titulo, descricao: `${f.periodo ? textoPeriodo(f.periodo) : `Mês ${mes}`}: mensalidades proporcionais aos dias, saving sobre a economia comprovada, conveniência e defesa.`, linhas, colunas };
   }
 
   if (tipo === "consultas-api") {
+    const pa: unknown[] = [];
+    const filtroApi = porCliente(f, pa, "q.cliente_id") + noPeriodo(f, pa, "(q.data at time zone 'America/Sao_Paulo')::date");
     const linhas = await db.q(
-      `select ${SQL_PROVEDOR} as provedor, coalesce(f.nome, q.fonte_id) as servico, cl.nome as cliente,
+      `select ${SQL_PROVEDOR} as provedor, coalesce(f.nome, q.fonte_id) as servico, cl.nome as cliente, (select g.nome from grupos_economicos g where g.id = cl.grupo_id) as grupo,
               count(*)::int as consultas, count(*) filter (where q.resultado = 'ok')::int as ok, count(*) filter (where q.resultado <> 'ok')::int as erros,
               coalesce(sum(q.custo),0)::int as custo, round(coalesce(avg(q.custo),0))::int as medio
          from consultas q left join fontes f on f.id = q.fonte_id join clientes cl on cl.id = q.cliente_id
-        where to_char(q.data at time zone 'America/Sao_Paulo','YYYY-MM') = $1 and q.fonte_id is not null and ($2::uuid is null or q.cliente_id = $2)
-        group by 1, 2, 3 order by 1, custo desc`,
-      [mes, f.cliente || null],
+        where q.fonte_id is not null${filtroApi}
+        group by 1, 2, 3, 4 order by 1, custo desc`,
+      pa,
     );
-    return { titulo, descricao: `Mês ${mes}: quantas consultas foram feitas em cada API e quanto custaram, por base e por cliente. Consultas com erro normalmente não são cobradas pela fonte.`, linhas,
-      colunas: [c("provedor", "API"), c("servico", "Base"), c("cliente", "Cliente"), c("consultas", "Consultas", "num"), c("ok", "Com sucesso", "num"), c("erros", "Com erro", "num"),
-        c("custo", "Custo", "brl"), c("medio", "Custo médio", "brl")] };
+    const colunas = [c("provedor", "API"), c("servico", "Base"), c("cliente", "Cliente"), c("grupo", "Grupo econômico"), c("consultas", "Consultas", "num"), c("ok", "Com sucesso", "num"), c("erros", "Com erro", "num"),
+      c("custo", "Custo", "brl"), c("medio", "Custo médio", "brl")];
+    return { titulo, descricao: `${textoPeriodo(f.periodo ?? null)}: quantas consultas foram feitas em cada API (Direct Data e Infosimples) e quanto custaram, por base e por cliente. Consultas com erro normalmente não são cobradas pela fonte.`, linhas: linhas, colunas };
+  }
+
+  if (tipo === "multas-pagar" || tipo === "valores-multas") {
+    const pm: unknown[] = [];
+    const filtroM = porCliente(f, pm, "m.cliente_id") + noPeriodo(f, pm, tipo === "multas-pagar" ? "m.vencimento" : "m.data_infracao");
+    const rows = await db.q<MultaRow & { grupo: string | null }>(
+      `${SELECT_MULTA.replace("c.nome as cliente_nome,", `c.nome as cliente_nome, ${SQL_GRUPO} as grupo,`)}
+        where m.estado not in ('paga', 'cancelada') and c.excluido_em is null${filtroM}
+        order by m.vencimento nulls last, m.valor desc`,
+      pm,
+    );
+    const calc = rows.map((m) => {
+      const r = regra(m);
+      const v = valoresMulta(r);
+      const hojeV = melhorValorHoje(r, hoje);
+      const vencida = !!m.vencimento && m.vencimento < hoje;
+      return { m, v, hojeV, vencida, comDesconto: v.com40 ?? v.com20 };
+    });
+    if (tipo === "multas-pagar") {
+      const linhas = calc.filter((x) => pagavel(x.m.estado as EstadoMulta)).map(({ m, v, hojeV, vencida, comDesconto }) => ({
+        cliente: m.cliente_nome, grupo: m.grupo, placa: m.placa, apelido: m.apelido, auto: m.auto_infracao, infracao: m.descricao, orgao: m.orgao_nome,
+        data: m.data_infracao, vencimento: m.vencimento, dias: m.vencimento ? Math.round((Date.parse(m.vencimento) - Date.parse(hoje)) / 864e5) : null,
+        cheio: v.cheio, desconto: comDesconto, pagar: hojeV.valor, faixa: hojeV.desconto ? `${hojeV.desconto}%` : vencida ? "Vencida" : "Sem desconto",
+        situacao: ESTADOS[m.estado as EstadoMulta]?.rotulo ?? m.estado,
+      }));
+      const colunas = [c("cliente", "Cliente"), c("grupo", "Grupo econômico"), c("placa", "Placa"), c("apelido", "Veículo"), c("auto", "Auto de infração"), c("infracao", "Infração"), c("orgao", "Órgão"),
+        c("data", "Data da infração", "data"), c("vencimento", "Vencimento", "data"), c("dias", "Dias para vencer", "num"), c("cheio", "Valor da multa", "brl"), c("desconto", "Valor com desconto", "brl"),
+        c("pagar", "Valor a pagar hoje", "brl"), c("faixa", "Desconto hoje"), c("situacao", "Situação")];
+      return { titulo, descricao: `Vencimento: ${textoPeriodo(f.periodo ?? null)}. ` + "Multas que já podem ser pagas, do vencimento mais próximo ao mais distante. \"Valor a pagar hoje\" aplica o desconto que ainda vale (40% com SNE, 20% até o vencimento) ou o valor cheio se venceu.",
+        linhas: linhas, colunas };
+    }
+    // valores-multas: resumo por cliente
+    const por = new Map<string, any>();
+    for (const { m, v, hojeV, comDesconto } of calc) {
+      const k = m.cliente_id;
+      const l = por.get(k) ?? { cliente: m.cliente_nome, grupo: m.grupo, multas: 0, cheio: 0, desconto: 0, pagar: 0, economia: 0, com40: 0 };
+      l.multas++; l.cheio += v.cheio; l.desconto += comDesconto; l.pagar += hojeV.valor; l.economia += v.cheio - hojeV.valor; if (v.com40 !== null) l.com40++;
+      por.set(k, l);
+    }
+    const linhas = [...por.values()].sort((a, b) => b.cheio - a.cheio);
+    const colunas = [c("cliente", "Cliente"), c("grupo", "Grupo econômico"), c("multas", "Multas em aberto", "num"), c("com40", "Com direito a 40% (SNE)", "num"), c("cheio", "Valor da multa", "brl"),
+      c("desconto", "Valor com desconto", "brl"), c("pagar", "Valor a ser pago hoje", "brl"), c("economia", "Economia pagando hoje", "brl")];
+    return { titulo, descricao: `Infrações: ${textoPeriodo(f.periodo ?? null)}. ` + "Multas em aberto por cliente: valor cheio, valor com o maior desconto possível (40% com SNE ou 20%) e quanto se paga hoje, com os descontos que ainda valem.", linhas: linhas, colunas };
+  }
+
+  if (tipo === "ranking-placas") {
+    const pr: unknown[] = [];
+    const filtroP = porCliente(f, pr, "p.cliente_id");
+    const periodoP = noPeriodo(f, pr, "m.data_infracao");
+    const linhas = (await db.q(
+      `select p.placa, p.apelido, c.nome as cliente, ${SQL_GRUPO} as grupo,
+              count(m.id)::int as multas, count(m.id) filter (where m.estado not in ('paga','cancelada'))::int as abertas,
+              coalesce(sum(m.pontos),0)::int as pontos, coalesce(sum(m.valor),0)::int as valor,
+              count(m.id) filter (where m.gravidade = 'gravissima')::int as gravissimas, max(m.data_infracao) as ultima,
+              (select string_agg(k.nome, ', ' order by k.nome) from placa_condutores pc join condutores k on k.id = pc.condutor_id where pc.placa_id = p.id) as condutores
+         from placas p join clientes c on c.id = p.cliente_id and c.excluido_em is null
+         join multas m on m.placa_id = p.id and m.estado <> 'cancelada'${periodoP}
+        where true${filtroP}
+        group by p.id, p.placa, p.apelido, c.nome, c.grupo_id
+        order by multas desc, pontos desc, valor desc limit 500`,
+      pr,
+    )).map((l: any, i: number) => ({ posicao: i + 1, ...l }));
+    return { titulo, descricao: `Infrações: ${textoPeriodo(f.periodo ?? null)}. Placas com mais multas no período (multas canceladas não contam).`, linhas,
+      colunas: [c("posicao", "#", "num"), c("placa", "Placa"), c("apelido", "Veículo"), c("cliente", "Cliente"), c("grupo", "Grupo econômico"), c("multas", "Multas", "num"), c("abertas", "Em aberto", "num"),
+        c("pontos", "Pontos", "num"), c("valor", "Valor das multas", "brl"), c("gravissimas", "Gravíssimas", "num"), c("condutores", "Condutores"), c("ultima", "Última infração", "data")] };
   }
 
   if (tipo === "multas") {
@@ -196,6 +299,7 @@ export async function gerarRelatorioGestao(db: Db, tipo: TipoRelatorio, f: Filtr
   }
 
   if (tipo === "veiculos") {
+    const pv: unknown[] = [];
     const linhas = await db.q(
       `select c.nome as cliente,
          count(p.id) filter (where p.status <> 'pausada') as ativas,
@@ -205,9 +309,9 @@ export async function gerarRelatorioGestao(db: Db, tipo: TipoRelatorio, f: Filtr
          (select count(*) from multas m where m.cliente_id = c.id and m.estado not in ('paga','cancelada')) as multas_abertas,
          (select coalesce(sum(m.valor),0) from multas m where m.cliente_id = c.id and m.estado not in ('paga','cancelada')) as valor_aberto
        from clientes c left join placas p on p.cliente_id = c.id
-       where c.ativo and c.excluido_em is null ${f.cliente ? "and c.id = $1" : ""}
+       where c.ativo and c.excluido_em is null${porCliente(f, pv, "c.id")}
        group by c.id, c.nome order by ativas desc, c.nome`,
-      f.cliente ? [f.cliente] : [],
+      pv,
     );
     return { titulo, descricao: "Placas de cada cliente, adesão ao SNE, condutores e multas em aberto.", linhas: linhas.map((l: any) => ({ ...l, ativas: Number(l.ativas), pausadas: Number(l.pausadas), sem_sne: Number(l.sem_sne), sem_condutor: Number(l.sem_condutor), multas_abertas: Number(l.multas_abertas), valor_aberto: Number(l.valor_aberto) })),
       colunas: [c("cliente", "Cliente"), c("ativas", "Placas ativas", "num"), c("pausadas", "Pausadas", "num"), c("sem_sne", "Sem SNE", "num"), c("sem_condutor", "Sem condutor", "num"), c("multas_abertas", "Multas em aberto", "num"), c("valor_aberto", "Valor em aberto", "brl")] };
@@ -216,7 +320,7 @@ export async function gerarRelatorioGestao(db: Db, tipo: TipoRelatorio, f: Filtr
   // placas: lista detalhada
   const params: unknown[] = [];
   const cond = ["c.ativo", "c.excluido_em is null"];
-  if (f.cliente) { params.push(f.cliente); cond.push(`p.cliente_id = $${params.length}`); }
+  const pcl = porCliente(f, params, "p.cliente_id"); if (pcl) cond.push(pcl.slice(5));
   if (f.placa) { params.push(`%${f.placa.replace(/[^A-Za-z0-9]/g, "").toUpperCase()}%`); cond.push(`p.placa like $${params.length}`); }
   const linhas = await db.q(
     `select c.nome as cliente, p.placa, p.renavam, p.uf, p.apelido, p.grupo, p.centro_custo,
@@ -239,7 +343,10 @@ export function tabelaXlsx(t: Tabela): Buffer {
     if (col.tipo === "data") return String(v).slice(0, 10).split("-").reverse().join("/");
     return String(v);
   };
-  const aoa = [[`Vigia Placa · ${t.titulo}`], [t.descricao], [], t.colunas.map((c) => (c.tipo === "brl" ? `${c.rotulo} (R$)` : c.rotulo)), ...t.linhas.map((l) => t.colunas.map((c) => fmt(c, l[c.chave])))];
+  const aoa = [[`Vigia Placa · ${t.titulo}`], [t.descricao], [], t.colunas.map((c) => (c.tipo === "brl" ? `${c.rotulo} (R$)` : c.rotulo)), ...t.linhas.map((l) => t.colunas.map((c) => fmt(c, l[c.chave]))),
+    ...(t.linhas.length > 1 && t.colunas.some(somavel)
+      ? [t.colunas.map((c, i) => (i === 0 ? `Total (${t.linhas.length})` : somavel(c) ? fmt(c, t.linhas.reduce((a, l) => a + Number(l[c.chave] ?? 0), 0)) : ""))]
+      : [])];
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   ws["!cols"] = t.colunas.map((c) => ({ wch: c.tipo === "texto" ? 26 : 14 }));
   const wb = XLSX.utils.book_new();

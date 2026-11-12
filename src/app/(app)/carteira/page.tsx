@@ -18,7 +18,7 @@ export default async function Carteira({ searchParams }: { searchParams: Promise
   const mes = hojeISO().slice(0, 7);
   const d = await noEscopo(s, async (db) => {
     const clientes = await db.q(
-      `select c.id, c.nome, c.documento, c.segmento, pl.nome as plano, coalesce(c.preco_placa_personalizado, pl.preco_placa) as preco_placa, c.preco_placa_personalizado, c.saving_bps_personalizado, pl.saving_bps as plano_saving_bps, c.forma_cobranca, c.ciclo_fechamento, c.vencimento_dias, c.bloqueado_em, c.motivo_bloqueio, c.preco_defesa_personalizado, c.taxa_conv_tipo_personalizado, c.taxa_conv_valor_personalizado, f.nome as franqueado, f.repasse_mensalidade_bps, f.repasse_saving_bps,
+      `select c.id, c.nome, c.documento, c.segmento, (select g.nome from grupos_economicos g where g.id = c.grupo_id) as grupo, pl.nome as plano, coalesce(c.preco_placa_personalizado, pl.preco_placa) as preco_placa, c.preco_placa_personalizado, c.saving_bps_personalizado, pl.saving_bps as plano_saving_bps, c.forma_cobranca, c.ciclo_fechamento, c.vencimento_dias, c.bloqueado_em, c.motivo_bloqueio, c.preco_defesa_personalizado, c.taxa_conv_tipo_personalizado, c.taxa_conv_valor_personalizado, f.nome as franqueado, f.repasse_mensalidade_bps, f.repasse_saving_bps,
          (select count(*) from placas p where p.cliente_id = c.id and p.status <> 'pausada') as placas,
          (select count(*) from multas m where m.cliente_id = c.id and m.estado not in ('paga','cancelada')) as abertas,
          (select coalesce(sum(valor),0) from economias e where e.cliente_id = c.id and e.mes = $1 and e.comprovada) as economia_mes,
@@ -65,7 +65,7 @@ export default async function Carteira({ searchParams }: { searchParams: Promise
                   const p = prazos(c.id);
                   return (
                     <tr key={c.id}>
-                      <td><div className="font-semibold">{c.nome}{c.bloqueado_em && <span className="ml-2 rounded bg-rec-100 px-1.5 py-0.5 text-[11px] font-bold text-rec">Bloqueado</span>}</div>{c.bloqueado_em && c.motivo_bloqueio && <div className="text-xs text-rec">{c.motivo_bloqueio}</div>}<div className="text-xs text-suave">{c.segmento} · plano {c.plano}{s.nivel === "franqueadora" && franquiasAtivas() ? ` · ${c.franqueado ?? "direto"}` : ""}</div></td>
+                      <td><div className="font-semibold">{c.nome}{c.bloqueado_em && <span className="ml-2 rounded bg-rec-100 px-1.5 py-0.5 text-[11px] font-bold text-rec">Bloqueado</span>}</div>{c.bloqueado_em && c.motivo_bloqueio && <div className="text-xs text-rec">{c.motivo_bloqueio}</div>}<div className="text-xs text-suave">{c.grupo && <span className="mr-1 rounded bg-nevoa px-1.5 py-0.5 font-semibold text-vigia">🏢 {c.grupo}</span>}{c.segmento} · plano {c.plano}{s.nivel === "franqueadora" && franquiasAtivas() ? ` · ${c.franqueado ?? "direto"}` : ""}</div></td>
                       <td className="whitespace-nowrap text-xs">
                         <b className="num">{c.preco_placa ? brl(c.preco_placa) : "[DEFINIR]"}</b>/placa
                         <div className="text-suave">saving {((c.saving_bps_personalizado ?? c.plano_saving_bps ?? 2000) / 100).toLocaleString("pt-BR")}%{c.preco_placa_personalizado !== null || c.saving_bps_personalizado !== null ? <span className="ml-1 rounded bg-ambar-100 px-1 font-semibold text-[#6b4700]">personalizado</span> : ""}</div>
