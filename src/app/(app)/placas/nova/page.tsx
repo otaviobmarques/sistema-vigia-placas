@@ -5,6 +5,7 @@ import { LeitorDocumento } from "@/components/leitor-documento";
 import { leitorAtivo } from "@/lib/integrations/leitor";
 import { cadastrarPlacaEquipe } from "../../../actions";
 import { listarCondutores } from "@/lib/services/condutores";
+import { BotaoEnviar } from "@/components/botao-enviar";
 import { ClienteECondutores } from "./cliente-condutores";
 
 export const metadata = { title: "Cadastrar placa" };
@@ -45,7 +46,7 @@ export default async function NovaPlaca({ searchParams }: { searchParams: Promis
             <div><label className="rotulo">Grupo</label><input name="grupo" className="campo" /></div>
             <div><label className="rotulo">Centro de custo</label><input name="centro_custo" className="campo" /></div>
             <div><label className="rotulo">Adesão ao SNE</label><input name="sne" type="date" className="campo" /></div>
-            <div className="flex items-end sm:col-span-2"><button className="btn-primario w-full">Cadastrar e consultar</button></div>
+            <div className="flex items-end sm:col-span-2"><BotaoEnviar className="btn-primario w-full" enviando="Cadastrando…">Cadastrar e consultar</BotaoEnviar></div>
           </form>
         )}
       </Card>

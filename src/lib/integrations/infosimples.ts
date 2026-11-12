@@ -97,8 +97,8 @@ export async function chamarServico(servico: string, params: Record<string, stri
   const res = await fetch(`https://api.infosimples.com/api/v2/consultas/${servico}`, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded", "user-agent": "VigiaPlaca/1.0" },
-    body: new URLSearchParams({ token: process.env.INFOSIMPLES_TOKEN!, timeout: "300", ...params }),
-    signal: AbortSignal.timeout(320_000),
+    body: new URLSearchParams({ token: process.env.INFOSIMPLES_TOKEN!, timeout: "150", ...params }),
+    signal: AbortSignal.timeout(170_000),
   });
   return { status: res.status, json: await res.json().catch(() => ({ code: res.status, code_message: "resposta não é JSON" })) };
 }
