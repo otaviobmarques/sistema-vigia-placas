@@ -14,8 +14,8 @@ export function validarPlaca(p: string): { ok: true; placa: string; padrao: "ant
 
 export function normalizarRenavam(r: string): string {
   const d = (r ?? "").replace(/\D/g, "");
-  // Renavams antigos têm 9 dígitos: completam-se com zeros à esquerda.
-  return d.length === 9 ? d.padStart(11, "0") : d;
+  // Faltando dígito (Renavam antigo de 9 dígitos, ou zero à esquerda apagado pelo Excel): completa com zeros.
+  return d.length > 0 && d.length < 11 ? d.padStart(11, "0") : d;
 }
 
 export function digitoRenavam(base10: string): number {
@@ -27,7 +27,7 @@ export function digitoRenavam(base10: string): number {
 
 export function validarRenavam(r: string): { ok: true; renavam: string } | { ok: false; erro: string } {
   const renavam = normalizarRenavam(r);
-  if (renavam.length < 11) return { ok: false, erro: "Renavam com dígitos faltando" };
+  if (!renavam) return { ok: false, erro: "Informe o Renavam" };
   if (renavam.length > 11) return { ok: false, erro: "Renavam com dígitos a mais" };
   if (digitoRenavam(renavam.slice(0, 10)) !== Number(renavam[10])) return { ok: false, erro: "Renavam com dígito verificador inválido" };
   return { ok: true, renavam };
