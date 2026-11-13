@@ -100,24 +100,31 @@ export function melhorValorHoje(m: MultaRegra, hoje: DataISO): { valor: Centavos
   return { valor: v.com20, desconto: "20" };
 }
 
+export type Selo = { faixa: "40" | "20" | null; texto: string };
+
 /**
- * Selo de desconto da multa: qual faixa vale hoje (40% SNE, 20% padrão ou nenhuma) e por quê, para a dica ao passar o mouse.
- * 40%: proprietário no SNE antes da infração, órgão aderente, sem recurso e pagando até o vencimento (art. 284, § 1º).
- * 20%: pagando até o vencimento (art. 284, caput).
+ * Selos de desconto da multa, com a explicação de cada um (dica ao passar o mouse).
+ * - Com direito a 40% (SNE antes da infração, órgão aderente, sem recurso): aparecem os DOIS, 40% e 20%,
+ *   porque o cliente escolhe: 40% abre mão de recorrer; 20% paga mais e mantém o direito de recorrer.
+ * - Sem direito a 40%: só o de 20% (até o vencimento), dizendo por que não há 40%.
+ * - Vencida, paga ou cancelada: um selo sem desconto.
  */
-export function seloDesconto(m: MultaRegra, hoje: DataISO): { faixa: "40" | "20" | null; texto: string } {
+export function selosDesconto(m: MultaRegra, hoje: DataISO): Selo[] {
   const v = valoresMulta(m);
   const br = (d: string) => d.split("-").reverse().join("/");
-  if (m.estado === "paga" || m.estado === "cancelada") return { faixa: null, texto: m.estado === "paga" ? "Multa já paga." : "Multa cancelada." };
-  if (m.vencimento && hoje > m.vencimento) return { faixa: null, texto: `Sem desconto: o vencimento foi em ${br(m.vencimento)}. O valor agora é o cheio (${brl(v.cheio)}).` };
+  if (m.estado === "paga" || m.estado === "cancelada") return [{ faixa: null, texto: m.estado === "paga" ? "Multa já paga." : "Multa cancelada." }];
+  if (m.vencimento && hoje > m.vencimento) return [{ faixa: null, texto: `Sem desconto: o vencimento foi em ${br(m.vencimento)}. O valor agora é o cheio (${brl(v.cheio)}).` }];
   const ate = m.vencimento ? ` até ${br(m.vencimento)}` : " até o vencimento";
   if (v.com40 !== null && m.estado !== "em_defesa")
-    return { faixa: "40", texto: `Elegível a 40% (SNE): pague ${brl(v.com40)}${ate} sem recorrer. O proprietário está no SNE desde antes da infração e o órgão é aderente.` };
+    return [
+      { faixa: "40", texto: `40% (SNE): pague ${brl(v.com40)}${ate}, abrindo mão de recorrer. O proprietário está no SNE desde antes da infração e o órgão é aderente.` },
+      { faixa: "20", texto: `20%: pague ${brl(v.com20)}${ate} e mantenha o direito de recorrer (defesa prévia e JARI).` },
+    ];
   const motivo = m.estado === "em_defesa" ? "a multa está em recurso (os 40% exigem não recorrer)"
     : !m.sneAdesaoEm ? "o cliente não está registrado no SNE"
     : !m.orgaoAderenteSne ? "o órgão autuador não aderiu ao SNE"
     : "a adesão ao SNE foi depois da infração";
-  return { faixa: "20", texto: `Elegível a 20%: pague ${brl(v.com20)}${ate}. Sem 40% porque ${motivo}. Dá para recorrer mesmo pagando com 20%.` };
+  return [{ faixa: "20", texto: `20%: pague ${brl(v.com20)}${ate}. Sem 40% porque ${motivo}. Dá para recorrer mesmo pagando com 20%.` }];
 }
 
 /** Art. 261, I: limite de pontos em 12 meses conforme o número de gravíssimas. */

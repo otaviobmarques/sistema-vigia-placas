@@ -1,7 +1,7 @@
 "use client";
 import { useRef, useState } from "react";
 
-const TOM = { "40": "bg-economia text-white", "20": "bg-ambar text-vigia", nenhum: "bg-nevoa text-suave line-through" } as const;
+const TOM = { "40": "bg-rec text-white", "20": "bg-ambar text-vigia", nenhum: "bg-nevoa text-suave line-through" } as const;
 
 /**
  * Selo 40% / 20% na frente da multa. A explicação aparece ao passar o mouse, focar ou tocar;
@@ -31,4 +31,9 @@ export function SeloDesconto({ faixa, texto }: { faixa: "40" | "20" | null; text
       )}
     </>
   );
+}
+
+/** Os selos da multa lado a lado (40% e 20% quando há direito ao SNE; só 20% ou "0%" nos demais casos). */
+export function SelosDesconto({ selos }: { selos: Array<{ faixa: "40" | "20" | null; texto: string }> }) {
+  return <span className="inline-flex shrink-0 flex-col gap-1">{selos.map((s) => <SeloDesconto key={s.faixa ?? "0"} {...s} />)}</span>;
 }

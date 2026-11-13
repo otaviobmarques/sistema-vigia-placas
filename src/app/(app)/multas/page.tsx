@@ -9,8 +9,8 @@ import { Placa } from "@/components/marca";
 import { adicionarCarrinho } from "../../actions";
 import { ehNova, SeloNova } from "@/components/selo-nova";
 import { LogoOrgao } from "@/components/logo-orgao";
-import { SeloDesconto } from "@/components/selo-desconto";
-import { seloDesconto } from "@/lib/domain/ctb";
+import { SelosDesconto } from "@/components/selo-desconto";
+import { selosDesconto } from "@/lib/domain/ctb";
 
 export const metadata = { title: "Multas" };
 
@@ -87,7 +87,7 @@ export default async function Multas({ searchParams }: { searchParams: Promise<R
                       <tr key={m.id} className="hover:bg-nevoa/60">
                         <td>{pg && !m.no_carrinho && <input type="checkbox" name="multaId" value={m.id} className="h-4 w-4 accent-vigia" aria-label={`Selecionar ${m.placa}`} />}</td>
                         <td><Placa placa={m.placa} tamanho="sm" /><div className="mt-1 text-xs text-suave">{m.apelido}</div></td>
-                        <td><div className="flex items-start gap-2"><SeloDesconto {...seloDesconto(r, hoje)} /><div><div className="font-medium">{m.descricao}{ehNova(m.criado_em) && <SeloNova />}</div><div className="text-xs text-suave"><LogoOrgao id={m.orgao_id} nome={m.orgao_nome} /> · {dataBR(m.data_infracao)} · {m.pontos} pts</div></div></div></td>
+                        <td><div className="flex items-start gap-2"><SelosDesconto selos={selosDesconto(r, hoje)} /><div><div className="font-medium">{m.descricao}{ehNova(m.criado_em) && <SeloNova />}</div><div className="text-xs text-suave"><LogoOrgao id={m.orgao_id} nome={m.orgao_nome} /> · {dataBR(m.data_infracao)} · {m.pontos} pts</div></div></div></td>
                         <td><ChipEstado estado={m.estado} /></td>
                         <td>{prazo && m.estado !== "paga" && m.estado !== "cancelada" ? <><ChipPrazo dias={diasEntre(hoje, prazo)} /><div className="mt-1 text-[11px] text-suave">{prazo === limInd ? "indicação" : "vencimento"}</div></> : <span className="text-xs text-suave">—</span>}</td>
                         <td className="num text-right">{brl(m.valor)}</td>

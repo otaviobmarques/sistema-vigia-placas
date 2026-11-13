@@ -13,8 +13,8 @@ import { Placa, Vigi } from "@/components/marca";
 import { adicionarCarrinho, indicar, pedirDefesaAction, protocolar, reconhecerSne } from "../../../actions";
 import { precosDoCliente } from "@/lib/services/precos";
 import { LogoOrgao, logoDoOrgao } from "@/components/logo-orgao";
-import { SeloDesconto } from "@/components/selo-desconto";
-import { seloDesconto } from "@/lib/domain/ctb";
+import { SelosDesconto } from "@/components/selo-desconto";
+import { selosDesconto } from "@/lib/domain/ctb";
 
 export default async function DetalheMulta({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ ok?: string; erro?: string }> }) {
   const s = await exigirCliente();
@@ -58,7 +58,7 @@ export default async function DetalheMulta({ params, searchParams }: { params: P
             {GRAVIDADES[m.gravidade].rotulo} · {m.pontos} pontos · <LogoOrgao id={m.orgao_id} nome={m.orgao_nome} /> · {m.local} · {dataBR(m.data_infracao)}{m.hora ? `, ${m.hora}` : ""}
           </p>
         </div>
-        <div className="flex items-center gap-2"><SeloDesconto {...seloDesconto(r, hoje)} /><ChipEstado estado={m.estado} />{aberta && prazoPrincipal && <ChipPrazo prefixo="Prazo: " dias={diasEntre(hoje, prazoPrincipal)} />}</div>
+        <div className="flex items-center gap-2"><SelosDesconto selos={selosDesconto(r, hoje)} /><ChipEstado estado={m.estado} />{aberta && prazoPrincipal && <ChipPrazo prefixo="Prazo: " dias={diasEntre(hoje, prazoPrincipal)} />}</div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[1.6fr_1fr]">
