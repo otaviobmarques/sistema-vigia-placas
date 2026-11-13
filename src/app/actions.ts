@@ -21,6 +21,8 @@ import { consultarPlaca, varredura } from "@/lib/services/monitoramento";
 import { enfileirarAntt, enfileirarConsultas } from "@/lib/services/fila-consultas";
 import { cifrar } from "@/lib/cofre";
 import { baixarAutoAntt, segundaViaAntt } from "@/lib/services/antt";
+import { baixarNotificacaoSne, boletoSne } from "@/lib/services/senatran";
+import { guardarDocumento } from "@/lib/services/documentos";
 import { indicarCondutor, aceitarIndicacao, protocolarIndicacao } from "@/lib/services/indicacao";
 import { pedirDefesa, atualizarDefesa } from "@/lib/services/defesa";
 import { fecharMes } from "@/lib/services/faturamento";
@@ -883,7 +885,7 @@ export async function criarCliente(f: FormData) {
       await db.q("update clientes set sne_cadastrado = $2, sne_desde = $3 where id = $1", [novoId, f.get("sne_cadastrado") === "on", f.get("sne_cadastrado") === "on" ? s(f, "sne_desde") || null : null]);
       const antt = lerAcessoAntt(f);
       if (antt.erro) throw new Error(antt.erro);
-      if (antt.login) await gravarAcessoAntt(db, novoId, antt);
+      if (antt.login || antt.gov?.login || antt.gov?.procuracao) await gravarAcessoAntt(db, novoId, antt);
       if (preco) {
         await db.q(
           "update clientes set preco_placa_personalizado = $2, saving_bps_personalizado = $3, preco_defesa_personalizado = $4, taxa_conv_tipo_personalizado = $5, taxa_conv_valor_personalizado = $6 where id = $1",
@@ -1235,15 +1237,34 @@ export async function excluirGrupo(f: FormData) {
 // ---------------- ANTT / SIFAMA (acesso do cliente) ----------------
 
 /** Lê o bloco "ANTT / SIFAMA" do formulário. Senha em branco mantém a guardada. */
-function lerAcessoAntt(f: FormData): { ativo: boolean; login: string | null; senha: string | null; representado: string | null; erro?: string } {
+/** Bloco "Acesso gov.br": procuração (validade + PDF) e login gov.br do cliente. Senha em branco mantém a guardada. */
+function lerAcessoGov(f: FormData) {
+  if (!f.has("gov_form")) return null;
+  const procuracao = f.get("procuracao_gov") === "on";
+  const validade = s(f, "procuracao_validade") || null;
+  const login = somenteDocumento(s(f, "gov_login")) || null;
+  const senha = String(f.get("gov_senha") ?? "") || null;
+  const arq = f.get("procuracao_arquivo");
+  const arquivo = arq instanceof File && arq.size > 0 ? arq : null;
+  let erro: string | undefined;
+  if (login && tipoDocumento(login) !== "PF") erro = "Login gov.br: é sempre o CPF da pessoa (sócio ou responsável).";
+  else if (validade && !/^\d{4}-\d{2}-\d{2}$/.test(validade)) erro = "Validade da procuração inválida.";
+  else if (arquivo && arquivo.size > 4 * 1024 * 1024) erro = "PDF da procuração muito grande (máximo 4 MB).";
+  return { procuracao, validade, login, senha, arquivo, multas: f.get("gov_multas_ativo") === "on", erro };
+}
+
+function lerAcessoAntt(f: FormData): { ativo: boolean; login: string | null; senha: string | null; representado: string | null; gov: ReturnType<typeof lerAcessoGov>; erro?: string } {
   const ativo = f.get("antt_ativo") === "on";
   const login = somenteDocumento(s(f, "antt_login")) || null;
   const senha = String(f.get("antt_senha") ?? "") || null;
   const representado = somenteDocumento(s(f, "antt_cnpj_representado")) || null;
-  if (login && !tipoDocumento(login)) return { ativo, login, senha, representado, erro: "Login do SIFAMA: informe um CPF ou CNPJ válido." };
-  if (representado && tipoDocumento(representado) !== "PJ") return { ativo, login, senha, representado, erro: "CNPJ representado inválido." };
-  if (ativo && !login) return { ativo, login, senha, representado, erro: "Para ativar a ANTT, informe o login (CPF ou CNPJ) do SIFAMA." };
-  return { ativo, login, senha, representado };
+  const gov = lerAcessoGov(f);
+  const base = { ativo, login, senha, representado, gov };
+  if (gov?.erro) return { ...base, erro: gov.erro };
+  if (login && !tipoDocumento(login)) return { ...base, erro: "Login do SIFAMA: informe um CPF ou CNPJ válido." };
+  if (representado && tipoDocumento(representado) !== "PJ") return { ...base, erro: "CNPJ representado inválido." };
+  if (ativo && !login && !gov?.login && !gov?.procuracao) return { ...base, erro: "Para ativar a ANTT, marque a procuração, informe o login gov.br do cliente ou o login do SIFAMA." };
+  return base;
 }
 
 async function gravarAcessoAntt(db: Db, clienteId: string, a: ReturnType<typeof lerAcessoAntt>) {
@@ -1252,6 +1273,68 @@ async function gravarAcessoAntt(db: Db, clienteId: string, a: ReturnType<typeof 
        antt_senha_cifrada = case when $5::text is null then antt_senha_cifrada else $5 end where id = $1`,
     [clienteId, a.ativo, a.login, a.representado, a.senha ? cifrar(a.senha) : null],
   );
+  const g = a.gov;
+  if (!g) return;
+  await db.q(
+    `update clientes set procuracao_gov = $2, procuracao_validade = $3, gov_login = $4, gov_multas_ativo = $5, gov_ultimo_erro = null,
+       gov_senha_cifrada = case when $4::text is null then null when $6::text is null then gov_senha_cifrada else $6 end where id = $1`,
+    [clienteId, g.procuracao, g.validade, g.login, g.multas, g.senha ? cifrar(g.senha) : null],
+  );
+  if (g.arquivo) {
+    const buf = Buffer.from(await g.arquivo.arrayBuffer());
+    const pdf = buf.subarray(0, 5).toString("latin1") === "%PDF-";
+    // A procuração fica guardada até a validade (sem validade: 1 ano).
+    await guardarDocumento(db, {
+      clienteId, tipo: "procuracao", nome: g.arquivo.name || "procuracao.pdf", mime: pdf ? "application/pdf" : g.arquivo.type || "application/octet-stream",
+      base64: buf.toString("base64"), expiraEm: g.validade ? `${g.validade}T23:59:59-03:00` : new Date(Date.now() + 365 * 864e5).toISOString(),
+    });
+  }
+}
+
+/** Login gov.br do procurador da Vigia Placa (Backoffice). Vale para todos os clientes com procuração. */
+export async function salvarProcurador(f: FormData) {
+  const sessao = await exigirAdminSistema("/backoffice");
+  const cpf = somenteDocumento(s(f, "procurador_cpf")) || null;
+  const senha = String(f.get("procurador_senha") ?? "") || null;
+  if (cpf && tipoDocumento(cpf) !== "PF") ir("/backoffice?aba=fontes", { erro: "Informe o CPF do procurador." });
+  await noEscopo(sessao, async (db) => {
+    await db.q(
+      `update configuracao set procurador_cpf = $1, procurador_senha_cifrada = case when $1::text is null then null when $2::text is null then procurador_senha_cifrada else $2 end where id = 1`,
+      [cpf, senha ? cifrar(senha) : null],
+    );
+    await auditar(db, { usuarioId: sessao.usuarioId, acao: "procurador_gov_salvo", entidade: "configuracao", entidadeId: "1", dados: { cpf: !!cpf, senhaNova: !!senha } });
+  });
+  revalidatePath("/backoffice");
+  ir("/backoffice?aba=fontes", { ok: cpf ? "Procurador gov.br salvo. Clientes com procuração passam a ser consultados com este acesso." : "Procurador removido." });
+}
+
+// ---------------- SNE (SENATRAN) sob demanda: notificação e boleto com desconto ----------------
+
+export async function notificacaoSneAcao(f: FormData) {
+  const sessao = await exigirSessao();
+  const id = s(f, "id");
+  const volta = `/multas/${id}`;
+  try {
+    await noEscopo(sessao, (db) => baixarNotificacaoSne(db, id));
+  } catch (e: any) {
+    ir(volta, { erro: e.message });
+  }
+  revalidatePath(volta);
+  ir(volta, { ok: "Notificação baixada do SNE e guardada por 60 dias." });
+}
+
+export async function boletoSneAcao(f: FormData) {
+  const sessao = await exigirSessao();
+  const id = s(f, "id");
+  const volta = `/multas/${id}`;
+  let r: Awaited<ReturnType<typeof boletoSne>> | null = null;
+  try {
+    r = await noEscopo(sessao, (db) => boletoSne(db, id));
+  } catch (e: any) {
+    ir(volta, { erro: e.message });
+  }
+  revalidatePath(volta);
+  ir(volta, { ok: r?.codigo ? `Boleto do SNE emitido${r.texto ? ` (${r.texto})` : ""}. Use "Copiar linha digitável"${r.temPdf ? " ou baixe o PDF" : ""}.` : "O SNE não devolveu boleto para esta multa." });
 }
 
 export async function salvarAcessoAntt(f: FormData) {
@@ -1267,10 +1350,10 @@ export async function salvarAcessoAntt(f: FormData) {
     await auditar(db, { usuarioId: sessao.usuarioId, clienteId, acao: "antt_acesso_salvo", entidade: "cliente", entidadeId: clienteId, dados: { ativo: a.ativo, senhaNova: !!a.senha } });
     return !!(a.senha || c.antt_senha_cifrada);
   });
-  if (a.ativo && !temSenha) ir(volta, { erro: "Acesso salvo, mas falta a senha do SIFAMA para consultar." });
+  if (a.ativo && !temSenha && !a.gov?.procuracao && !a.gov?.login) ir(volta, { erro: "Acesso salvo, mas falta a senha do SIFAMA para consultar." });
   if (a.ativo) after(() => enfileirarAntt([clienteId]).then(() => undefined));
   revalidatePath("/", "layout");
-  ir(volta, { ok: a.ativo ? "Acesso ao SIFAMA salvo. A consulta da ANTT já está rodando: o resultado aparece aqui em instantes." : "Acesso ao SIFAMA salvo (ANTT desativada para este cliente)." });
+  ir(volta, { ok: a.ativo ? "Acesso salvo. A consulta da ANTT já está rodando: o resultado aparece aqui em instantes." : "Acesso salvo (ANTT desativada para este cliente)." });
 }
 
 export async function consultarAnttJa(f: FormData) {

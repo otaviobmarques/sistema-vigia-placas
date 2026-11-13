@@ -10,13 +10,14 @@ import { dataBR, dataCurta, diasEntre, hojeISO } from "@/lib/domain/dates";
 import { brl } from "@/lib/domain/money";
 import { Aviso, Card, ChipEstado, ChipPrazo, Mensagem } from "@/components/ui";
 import { Placa, Vigi } from "@/components/marca";
-import { adicionarCarrinho, indicar, pedirDefesaAction, protocolar, reconhecerSne } from "../../../actions";
+import { adicionarCarrinho, indicar, pedirDefesaAction, protocolar, reconhecerSne, notificacaoSneAcao, boletoSneAcao } from "../../../actions";
 import { precosDoCliente } from "@/lib/services/precos";
 import { LogoOrgao, logoDoOrgao } from "@/components/logo-orgao";
 import { SelosDesconto } from "@/components/selo-desconto";
 import { selosDesconto } from "@/lib/domain/ctb";
 import { BotaoCopiar } from "@/components/documentos-multa";
 import { documentosDaMulta } from "@/lib/services/documentos";
+import { BotaoEnviar } from "@/components/botao-enviar";
 
 export default async function DetalheMulta({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ ok?: string; erro?: string }> }) {
   const s = await exigirCliente();
@@ -181,7 +182,9 @@ export default async function DetalheMulta({ params, searchParams }: { params: P
             {(() => {
               const boleto = d.docs.docs.find((x) => x.tipo === "boleto");
               const notif = d.docs.notificacoes[0];
-              const nada = !boleto && !m.boleto_url && !m.linha_digitavel && !m.pix_copia_cola && !notif;
+              const notifSne = d.docs.docs.find((x) => x.tipo === "notificacao_sne");
+              const chave = !!m.chave_infracao && aberta;
+              const nada = !boleto && !m.boleto_url && !m.linha_digitavel && !m.pix_copia_cola && !notif && !chave;
               return (
                 <div className="space-y-3 text-sm">
                   <div className="flex flex-wrap gap-2">
@@ -189,11 +192,19 @@ export default async function DetalheMulta({ params, searchParams }: { params: P
                       : m.boleto_url ? <a href={m.boleto_url} target="_blank" rel="noopener noreferrer" className="btn-contorno btn-sm">📄 Boleto na fonte</a> : null}
                     {m.pix_copia_cola && <BotaoCopiar texto={m.pix_copia_cola} rotulo="Copiar PIX" className="btn-contorno btn-sm" />}
                     {m.linha_digitavel && <BotaoCopiar texto={m.linha_digitavel} rotulo="Copiar linha digitável" className="btn-contorno btn-sm" />}
-                    {notif && <a href={`/api/notificacoes/${notif.id}`} target="_blank" rel="noopener" className="btn-contorno btn-sm">🔔 Ver notificação</a>}
+                    {notif ? <a href={`/api/notificacoes/${notif.id}`} target="_blank" rel="noopener" className="btn-contorno btn-sm">🔔 Ver notificação</a>
+                      : notifSne ? <a href={`/api/documentos/${notifSne.id}`} target="_blank" rel="noopener" className="btn-contorno btn-sm">🔔 Ver notificação (SNE)</a> : null}
                   </div>
+                  {chave && (
+                    <div className="flex flex-wrap gap-2 rounded-xl bg-nevoa p-2">
+                      {!notif && !notifSne && <form action={notificacaoSneAcao}><input type="hidden" name="id" value={m.id} /><BotaoEnviar className="btn-leve btn-sm" enviando="Baixando…">⬇ Baixar notificação do SNE</BotaoEnviar></form>}
+                      <form action={boletoSneAcao}><input type="hidden" name="id" value={m.id} /><BotaoEnviar className="btn-leve btn-sm" enviando="Emitindo…">🧾 Boleto do SNE (com desconto)</BotaoEnviar></form>
+                      <span className="self-center text-[11px] text-suave">pelo acesso gov.br do cliente</span>
+                    </div>
+                  )}
                   {boleto && <p className="text-xs text-suave">Boleto guardado até {dataBR(new Date(boleto.expira_em).toISOString().slice(0, 10))} (60 dias).</p>}
                   {!boleto && m.boleto_url && <p className="text-xs text-suave">O link da fonte pode expirar. O PDF é copiado para o sistema na próxima consulta da placa.</p>}
-                  {!notif && <p className="text-xs text-suave">Notificação não disponível nas bases. Envie a foto ou o PDF que chegou em <a href="/enviar" className="link">Enviar notificação</a> (fica guardada por 60 dias).</p>}
+                  {!notif && !notifSne && !chave && <p className="text-xs text-suave">Notificação não disponível nas bases. Com procuração ou login gov.br no cadastro, ela vem do SNE automaticamente. Ou envie a foto ou o PDF que chegou em <a href="/enviar" className="link">Enviar notificação</a> (fica guardada por 60 dias).</p>}
                   {nada && <p className="text-xs text-suave">A fonte desta multa não trouxe boleto. Ele costuma aparecer quando o órgão emite a notificação de penalidade.</p>}
                 </div>
               );

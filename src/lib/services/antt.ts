@@ -3,11 +3,11 @@
  * guarda as multas em `multas_antt`, os totais em `clientes.antt_resumo` e avisa quando chega multa nova.
  */
 import type { Db } from "../db";
-import { decifrar } from "../cofre";
 import { brl } from "../domain/money";
 import { anttEncerrada, consultarAntt, FONTE_ANTT, parametrosAntt, type ResultadoAntt } from "../integrations/antt";
 import { chamarServico, dataParaISO, modoSimulado, reaisParaCentavos } from "../integrations/infosimples";
-import { baixarArquivo, guardarDocumento } from "./documentos";
+import { guardarDocumento, pdfDaResposta } from "./documentos";
+import { acessoDoCliente } from "./acesso-gov";
 import { enfileirar } from "../integrations/mensagens";
 
 export type ClienteAntt = { id: string; nome: string; email: string | null; documento: string; tipo: string; alertas_canais: string[] | null; antt_ativo: boolean; antt_login: string | null; antt_senha_cifrada: string | null; antt_cnpj_representado: string | null };
@@ -23,17 +23,16 @@ export async function consultarAnttCliente(db: Db, clienteId: string): Promise<R
     return { ok: false, codigo: null, custo: 0, multas: [], resumo: null, erro, novas: 0 };
   };
   if (!c) return falha("Cliente não encontrado.");
-  if (!c.antt_ativo || !c.antt_login) return falha("Acesso ao SIFAMA não cadastrado.");
-  const senha = decifrar(c.antt_senha_cifrada);
-  if (!senha) return falha("Senha do SIFAMA precisa ser cadastrada de novo.");
-
-  const representado = c.antt_cnpj_representado || (c.documento.length === 14 ? c.documento : null);
-  const r = await consultarAntt(c.antt_login, senha, representado);
+  if (!c.antt_ativo) return falha("ANTT desativada para este cliente.");
+  // Procuração → gov.br do cliente → login próprio do SIFAMA.
+  const a = await acessoDoCliente(db, clienteId, { sifama: true });
+  if (!a.ok) return falha(a.erro);
+  const r = await consultarAntt(a.login, a.senha, a.representado);
   await db.q("insert into fontes (id, nome, ativa, prioridade, custo) values ($1, 'ANTT · SIFAMA (multas)', true, 1, 20) on conflict (id) do nothing", [FONTE_ANTT]);
   await db.q("insert into consultas (placa_id, cliente_id, fonte_id, custo, resultado, multas_encontradas, erro) values (null, $1, $2, $3, $4, $5, $6)",
     [clienteId, FONTE_ANTT, r.custo, r.ok ? "ok" : "erro", r.multas.length, r.erro ?? null]);
   if (!r.ok) {
-    const msg = r.contaInvalida ? `Acesso recusado pelo SIFAMA: confira login e senha. (${r.erro})` : r.erro ?? "Erro na consulta";
+    const msg = r.contaInvalida ? `Acesso recusado pelo SIFAMA (${a.rotulo}): confira login, senha${a.via === "procuracao" ? " e a procuração" : ""}. (${r.erro})` : r.erro ?? "Erro na consulta";
     await db.q("update clientes set antt_ultima_consulta = now(), antt_ultimo_erro = $2 where id = $1", [clienteId, msg]);
     return { ...r, erro: msg, novas: 0 };
   }
@@ -71,7 +70,10 @@ export async function consultarAnttCliente(db: Db, clienteId: string): Promise<R
 
 /** Clientes com acesso ao SIFAMA ativo (a rotina diária consulta todos). */
 export async function clientesComAntt(db: Db) {
-  return (await db.q<{ id: string }>("select id from clientes where antt_ativo and antt_login is not null and excluido_em is null and bloqueado_em is null")).map((x) => x.id);
+  return (await db.q<{ id: string }>(
+    `select id from clientes where antt_ativo and excluido_em is null and bloqueado_em is null
+       and (antt_login is not null or gov_login is not null or (procuracao_gov and (procuracao_validade is null or procuracao_validade >= current_date)))`,
+  )).map((x) => x.id);
 }
 
 /** Multas da ANTT para as telas (escopo do usuário via RLS). */
@@ -116,10 +118,9 @@ ${bloco("Agente", d?.agente, [["matricula", "Matrícula"], ["data", "Data"]])}
 }
 
 async function credenciais(db: Db, clienteId: string) {
-  const c = await db.one<ClienteAntt>("select id, nome, email, documento, tipo, alertas_canais, antt_ativo, antt_login, antt_senha_cifrada, antt_cnpj_representado from clientes where id = $1", [clienteId]);
-  const senha = decifrar(c?.antt_senha_cifrada);
-  if (!c?.antt_login || !senha) throw new Error("Acesso ao SIFAMA do cliente não cadastrado ou senha precisa ser digitada de novo.");
-  return { login: c.antt_login, senha, representado: c.antt_cnpj_representado || (c.documento.length === 14 ? c.documento : null) };
+  const a = await acessoDoCliente(db, clienteId, { sifama: true });
+  if (!a.ok) throw new Error(a.erro);
+  return { login: a.login, senha: a.senha, representado: a.representado };
 }
 
 async function registrarCusto(db: Db, clienteId: string, servico: string, custo: number, ok: boolean, erro?: string) {
@@ -134,13 +135,6 @@ async function chamarAntt(servico: string, params: Record<string, string>): Prom
   return { code: 200, header: { price: "0" }, data: [{ codigo_barras: "85810000050 0 00000000000 0 12345678901 2 34567890123 4", data_vencimento: "28/11/2026", valor_documento: "5.000,00" }] };
 }
 
-/** Tenta guardar o primeiro comprovante em PDF que a Infosimples devolve (site_receipts). */
-async function comprovantePdf(json: any) {
-  const urls: string[] = (Array.isArray(json?.site_receipts) ? json.site_receipts : []).filter((u: unknown): u is string => typeof u === "string");
-  for (const u of urls) { const a = await baixarArquivo(u); if (a?.mime === "application/pdf") return { ...a, url: u }; }
-  return null;
-}
-
 /** Baixa o auto de infração da ANTT e guarda (60 dias). */
 export async function baixarAutoAntt(db: Db, multaAnttId: string) {
   const m = await db.one<{ id: string; cliente_id: string; auto: string }>("select id, cliente_id, auto from multas_antt where id = $1", [multaAnttId]);
@@ -152,7 +146,7 @@ export async function baixarAutoAntt(db: Db, multaAnttId: string) {
   await registrarCusto(db, m.cliente_id, "antt/sifama/download-auto", custo, ok, ok ? undefined : json?.code_message);
   if (!ok) throw new Error(`SIFAMA não devolveu o auto: ${json?.code_message ?? json?.code ?? "erro"}`);
   const dados = Array.isArray(json?.data) ? json.data[0] : json?.data;
-  const pdf = await comprovantePdf(json);
+  const pdf = await pdfDaResposta(json);
   const doc = pdf
     ? { mime: pdf.mime, base64: pdf.base64, nome: `auto-antt-${m.auto}.pdf`, origemUrl: pdf.url }
     : { mime: "text/html; charset=utf-8", base64: Buffer.from(htmlAuto(m.auto, dados)).toString("base64"), nome: `auto-antt-${m.auto}.html`, origemUrl: null };
@@ -173,7 +167,7 @@ export async function segundaViaAntt(db: Db, multaAnttId: string) {
   const codigo = String(d?.codigo_barras ?? "").replace(/\D/g, "") || null;
   await db.q("update multas_antt set codigo_barras = coalesce($2, codigo_barras), vencimento = coalesce($3, vencimento), valor = case when $4::int > 0 then $4 else valor end, atualizada_em = now() where id = $1",
     [m.id, codigo, dataParaISO(d?.data_vencimento), reaisParaCentavos(d?.normalizado_valor_documento ?? d?.valor_documento)]);
-  const pdf = await comprovantePdf(json);
+  const pdf = await pdfDaResposta(json);
   if (pdf) await guardarDocumento(db, { clienteId: m.cliente_id, multaAnttId: m.id, tipo: "boleto_antt", mime: pdf.mime, base64: pdf.base64, nome: `boleto-antt-${m.auto}.pdf`, origemUrl: pdf.url });
   return { codigo, temPdf: !!pdf };
 }

@@ -9,6 +9,7 @@ import { CICLOS, type Ciclo } from "@/lib/domain/ciclo";
 import { CamposPrecosCliente } from "@/components/precos-cliente";
 import { franquiasAtivas } from "@/lib/acesso";
 import { CamposAntt } from "@/components/campos-antt";
+import { SQL_ACESSO_GOV } from "@/lib/services/acesso-gov";
 
 export const metadata = { title: "Clientes" };
 const FORMA: Record<string, string> = { pix: "Pix", boleto: "Boleto", cartao: "Cartão" };
@@ -19,7 +20,7 @@ export default async function Carteira({ searchParams }: { searchParams: Promise
   const mes = hojeISO().slice(0, 7);
   const d = await noEscopo(s, async (db) => {
     const clientes = await db.q(
-      `select c.id, c.nome, c.documento, c.segmento, c.sne_cadastrado, c.sne_desde, c.antt_ativo, c.antt_login, c.antt_cnpj_representado, (c.antt_senha_cifrada is not null) as tem_senha_antt, (select g.nome from grupos_economicos g where g.id = c.grupo_id) as grupo, pl.nome as plano, coalesce(c.preco_placa_personalizado, pl.preco_placa) as preco_placa, c.preco_placa_personalizado, c.saving_bps_personalizado, pl.saving_bps as plano_saving_bps, c.forma_cobranca, c.ciclo_fechamento, c.vencimento_dias, c.bloqueado_em, c.motivo_bloqueio, c.preco_defesa_personalizado, c.taxa_conv_tipo_personalizado, c.taxa_conv_valor_personalizado, f.nome as franqueado, f.repasse_mensalidade_bps, f.repasse_saving_bps,
+      `select c.id, c.nome, c.documento, c.segmento, c.sne_cadastrado, c.sne_desde, c.antt_ativo, c.antt_login, c.antt_cnpj_representado, (c.antt_senha_cifrada is not null) as tem_senha_antt, ${SQL_ACESSO_GOV}, (select g.nome from grupos_economicos g where g.id = c.grupo_id) as grupo, pl.nome as plano, coalesce(c.preco_placa_personalizado, pl.preco_placa) as preco_placa, c.preco_placa_personalizado, c.saving_bps_personalizado, pl.saving_bps as plano_saving_bps, c.forma_cobranca, c.ciclo_fechamento, c.vencimento_dias, c.bloqueado_em, c.motivo_bloqueio, c.preco_defesa_personalizado, c.taxa_conv_tipo_personalizado, c.taxa_conv_valor_personalizado, f.nome as franqueado, f.repasse_mensalidade_bps, f.repasse_saving_bps,
          (select count(*) from placas p where p.cliente_id = c.id and p.status <> 'pausada') as placas,
          (select count(*) from multas m where m.cliente_id = c.id and m.estado not in ('paga','cancelada')) as abertas,
          (select coalesce(sum(valor),0) from economias e where e.cliente_id = c.id and e.mes = $1 and e.comprovada) as economia_mes,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { erroDeConta, FONTES, fontesParaUf, infosimplesCobreUf, interpretarResposta, montarParametros, reaisParaCentavos, dataParaISO } from "./infosimples";
+import { erroDeConta, FONTE_SENATRAN, FONTES, janelaSenatran, parametrosGov, fontesParaUf, infosimplesCobreUf, interpretarResposta, montarParametros, reaisParaCentavos, dataParaISO } from "./infosimples";
 
 const fonte = (s: string) => FONTES.find((f) => f.servico === s)!;
 
@@ -123,5 +123,20 @@ describe("boleto e PIX", () => {
     const r = interpretarResposta(dnit, { code: 200, header: {}, data: [{ ait: "S2", datahora: "10/10/2026 14:32", normalizado_valor: 100, boleto_url: "javascript:alert(1)" }] });
     expect(r.multas[0].boletoUrl).toBeNull();
     expect(r.multas[0].pixCopiaCola).toBeNull();
+  });
+});
+
+describe("SENATRAN (SNE) com gov.br", () => {
+  it("monta o login gov.br e a janela de 12 meses", () => {
+    expect(parametrosGov({ login: "529.982.247-25", senha: "s", cnpj: "11.222.333/0001-81" })).toEqual({ login_cpf: "52998224725", login_senha: "s", cnpj: "11222333000181" });
+    expect(parametrosGov({ login: "52998224725", senha: "s", cnpj: null })).toEqual({ login_cpf: "52998224725", login_senha: "s" });
+    expect(janelaSenatran("2026-11-13")).toEqual({ data_inicio: "2025-11-14", data_fim: "2026-11-13" });
+  });
+  it("lê as infrações com a chave e o código do órgão autuador", () => {
+    const r = interpretarResposta(FONTE_SENATRAN, { code: 200, header: { price: "0.24" }, data: [{ total_infracoes: 1, infracoes: [{
+      auto_infracao: "AI10075509", chave_infracao: "ABC123XYZ", codigo_infracao: "5509", codigo_orgao_autuador: "125100", data_vencimento: "12/12/2026",
+      descricao: "Parar sobre a faixa de pedestres", placa: "DFG8H90", situacao: "Em aberto", valor_total: "130,16" }] }] });
+    expect(r.ok).toBe(true);
+    expect(r.multas[0]).toMatchObject({ autoInfracao: "AI10075509", chaveInfracao: "ABC123XYZ", orgaoId: "125100", orgaoNome: "Órgão autuador 125100", valor: 13016, vencimento: "2026-12-12" });
   });
 });

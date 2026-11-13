@@ -28,6 +28,8 @@ export interface MultaEncontrada {
   /** Link do PDF do boleto/guia na fonte (expira; o PDF é copiado para o banco). */
   boletoUrl?: string | null;
   pixCopiaCola?: string | null;
+  /** Chave da infração no SENATRAN: baixa a notificação e o boleto com desconto do SNE. */
+  chaveInfracao?: string | null;
 }
 
 export interface FonteInfosimples {
@@ -62,6 +64,27 @@ export const FONTES: FonteInfosimples[] = [
   { servico: "detran/rj/multas-guias", nome: "Detran-RJ", uf: "RJ", orgaoPadrao: { id: "DETRAN-RJ", nome: "Detran-RJ" }, parametros: ["renavam", "documento"], extra: 0.04 },
   { servico: "detran/mg/multas-extrato", nome: "Detran-MG", uf: "MG", orgaoPadrao: { id: "DETRAN-MG", nome: "Detran-MG" }, parametros: ["placa", "renavam"], extra: 0.08, aConfirmar: true },
 ];
+
+/** SENATRAN (SNE / Carteira Digital de Trânsito): multas de todos os órgãos com o login gov.br.
+ *  Só entra quando o cliente tem procuração ou login gov.br cadastrado. */
+export const FONTE_SENATRAN: FonteInfosimples = {
+  servico: "senatran/infracoes", nome: "SENATRAN · SNE (gov.br)", uf: "*", orgaoPadrao: { id: "SENATRAN", nome: "SENATRAN" }, parametros: ["placa"], extra: 0.04,
+};
+export type AcessoGov = { login: string; senha: string; cnpj: string | null };
+
+/** Parâmetros do login gov.br na Infosimples (CPF de quem entra + CNPJ representado). */
+export function parametrosGov(g: AcessoGov): Record<string, string> {
+  const p: Record<string, string> = { login_cpf: g.login.replace(/\D/g, ""), login_senha: g.senha };
+  if (g.cnpj) p.cnpj = g.cnpj.replace(/\D/g, "");
+  return p;
+}
+
+/** Janela da consulta do SENATRAN: últimos 12 meses (o máximo que o serviço aceita por consulta). */
+export function janelaSenatran(hoje: string) {
+  const d = new Date(`${hoje}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 364);
+  return { data_inicio: d.toISOString().slice(0, 10), data_fim: hoje };
+}
 
 /** UFs cujas fontes de multas exigem login gov.br ou certificado do proprietário (fora do padrão do produto). */
 export const UFS_EXIGEM_LOGIN = ["SP", "PR", "BA", "DF", "GO", "RS", "SC"];
@@ -140,17 +163,19 @@ export async function consultarMultas(
   placa: string,
   renavam: string,
   uf: string,
-  opts: { documento?: string | null; desligadas?: Set<string>; apenas?: string[] } = {},
+  opts: { documento?: string | null; desligadas?: Set<string>; apenas?: string[]; gov?: AcessoGov | null } = {},
 ): Promise<ResultadoConsulta> {
   if (modoSimulado()) {
     const r = simular(placa, uf);
     return { ...r, detalhes: [{ servico: "simulado", ok: true, codigo: 200, multas: r.multas, custo: r.custo }] };
   }
-  const fontes = fontesParaUf(uf).filter((f) => !opts.desligadas?.has(f.servico) && (!opts.apenas || opts.apenas.includes(f.servico)));
+  const fontes = [...fontesParaUf(uf), ...(opts.gov ? [FONTE_SENATRAN] : [])]
+    .filter((f) => !opts.desligadas?.has(f.servico) && (!opts.apenas || opts.apenas.includes(f.servico)));
   const detalhes = await Promise.all(
     fontes.map(async (f): Promise<ResultadoFonte> => {
       try {
-        const { json } = await chamarServico(f.servico, montarParametros(f, { placa, renavam, documento: opts.documento }));
+        const extra = f === FONTE_SENATRAN && opts.gov ? { ...parametrosGov(opts.gov), ...janelaSenatran(hojeISO()) } : {};
+        const { json } = await chamarServico(f.servico, { ...montarParametros(f, { placa, renavam, documento: opts.documento }), ...extra });
         return interpretarResposta(f, json);
       } catch (e: any) {
         return { servico: f.servico, ok: false, codigo: null, multas: [], custo: 0, erro: e?.message ?? String(e) };
@@ -245,8 +270,10 @@ function normalizar(b: any, f: FonteInfosimples): MultaEncontrada | null {
   const pontosBrutos = Number(primeiro(b, "pontos", "pontuacao"));
   const pontos = Number.isFinite(pontosBrutos) && pontosBrutos > 0 ? pontosBrutos : null;
   const gravidade = gravidadeDe(valor, primeiro(b, "gravidade", "natureza", "tipo_infracao"), pontos);
-  const orgaoNome = String(primeiro(b, "orgao_autuador", "orgao", "nome_orgao", "autuador") ?? f.orgaoPadrao.nome).trim();
   const codigoOrgao = primeiro(b, "codigo_orgao_autuador", "codigo_orgao");
+  // SENATRAN traz só o código do órgão autuador (RENAINF): mostra o código, não "SENATRAN".
+  const nomeSne = f === FONTE_SENATRAN && codigoOrgao ? `Órgão autuador ${codigoOrgao}` : null;
+  const orgaoNome = String(primeiro(b, "orgao_autuador", "orgao", "nome_orgao", "autuador") ?? nomeSne ?? f.orgaoPadrao.nome).trim();
   const dataHora = primeiro(b, "data_infracao", "datahora", "data_hora", "data_hora_infracao", "data");
   return {
     orgaoId: (orgaoNome === f.orgaoPadrao.nome ? f.orgaoPadrao.id : String(codigoOrgao ?? orgaoNome))
@@ -266,6 +293,7 @@ function normalizar(b: any, f: FonteInfosimples): MultaEncontrada | null {
     linhaDigitavel: (primeiro(b, "boleto_linha_digitavel", "linha_digitavel", "boleto_codigo_barras", "codigo_barras") ?? "").toString().replace(/\D/g, "") || null,
     boletoUrl: ((u) => (typeof u === "string" && /^https?:\/\//i.test(u) ? u : null))(primeiro(b, "boleto_url", "url_guia_storage", "url_guia", "url_boleto")),
     pixCopiaCola: (primeiro(b, "pix_copia_e_cola", "pix_copia_cola", "pix") ?? null)?.toString().trim() || null,
+    chaveInfracao: (primeiro(b, "chave_infracao") ?? null)?.toString().trim() || null,
   };
 }
 

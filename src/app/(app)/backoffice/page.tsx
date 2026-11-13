@@ -6,7 +6,7 @@ import { directDataAtiva, SERVICO_DIRECTDATA } from "@/lib/integrations/directda
 import { TestarFonte } from "@/components/testar-fonte";
 import { asaasSimulado } from "@/lib/integrations/asaas";
 import { Abas, Aviso, Cabecalho, Card, Mensagem, Numero } from "@/components/ui";
-import { atualizarDefesaAction, reativarFonte, salvarPrecoFonte, rodarVarredura, salvarConfigGlobal, salvarFranqueado, salvarRegraCliente, salvarRegraFontes, transferirCliente } from "../../actions";
+import { atualizarDefesaAction, reativarFonte, salvarPrecoFonte, rodarVarredura, salvarConfigGlobal, salvarFranqueado, salvarRegraCliente, salvarRegraFontes, transferirCliente, salvarProcurador } from "../../actions";
 import { ESTRATEGIAS, rotuloFrequencia, type EstrategiaFontes, type FonteDados } from "@/lib/domain/monitoramento";
 import { custoConsultaPlaca, custoMensalPlaca, fontesDisponiveis, UFS_EXEMPLO } from "@/lib/services/custos";
 import { CampoFrequencia } from "@/components/frequencia";
@@ -33,6 +33,10 @@ export default async function Backoffice({ searchParams }: { searchParams: Promi
       (select coalesce(sum(preco),0) from pedidos_defesa where to_char(criado_em,'YYYY-MM') = $1) as defesa,
       (select coalesce(sum(coalesce(c.preco_placa_personalizado, pl.preco_placa)),0) from placas p join clientes c on c.id = p.cliente_id join planos pl on pl.id = c.plano_id where p.status <> 'pausada') as mensalidades`, [mes]),
     cfg: await db.one("select * from configuracao"),
+    procurador: await db.one<{ cpf: string | null; temSenha: boolean; clientes: number }>(
+      `select procurador_cpf as cpf, (procurador_senha_cifrada is not null) as "temSenha",
+              (select count(*)::int from clientes where procuracao_gov and excluido_em is null) as clientes from configuracao where id = 1`,
+    ).then((x) => x ?? { cpf: null, temSenha: false, clientes: 0 }),
     planos: await db.q("select * from planos order by preco_placa nulls last"),
     franqueados: await db.q(`select f.*, (select count(*) from clientes c where c.franqueado_id = f.id) as clientes,
       (select count(*) from placas p join clientes c on c.id = p.cliente_id where c.franqueado_id = f.id and p.status <> 'pausada') as placas,
@@ -217,6 +221,18 @@ export default async function Backoffice({ searchParams }: { searchParams: Promi
 
       {aba === "fontes" && (
         <>
+        <Card titulo="Procurador gov.br da Vigia Placa" className="mb-6">
+          <p className="mb-3 text-sm text-suave">
+            Clientes que deram procuração no gov.br são consultados com este acesso (SNE/SENATRAN e SIFAMA), escolhendo o CNPJ do cliente.
+            É usado antes do login gov.br do próprio cliente. {d.procurador.cpf ? <b className="text-tinta">Configurado: CPF {d.procurador.cpf}{d.procurador.temSenha ? "" : " (falta a senha)"} · {d.procurador.clientes} cliente(s) com procuração.</b> : <b className="text-ambar">Ainda não configurado.</b>}
+          </p>
+          <form action={salvarProcurador} className="flex flex-wrap items-end gap-2">
+            <div><label className="rotulo">CPF do procurador</label><input name="procurador_cpf" defaultValue={d.procurador.cpf ?? ""} inputMode="numeric" autoComplete="off" className="campo w-48" /></div>
+            <div><label className="rotulo">Senha gov.br</label><input name="procurador_senha" type="password" autoComplete="new-password" placeholder={d.procurador.temSenha ? "•••••• (guardada; digite para trocar)" : ""} className="campo w-64" /></div>
+            <button className="btn-primario">Salvar procurador</button>
+          </form>
+          <p className="mt-2 text-[11px] text-suave">🔒 Senha guardada criptografada. Use uma conta gov.br nível prata ou ouro; verificação em duas etapas pode bloquear a consulta automática.</p>
+        </Card>
         <Card titulo="Saúde das fontes" acoes={<form action={rodarVarredura}><button className="btn-primario btn-sm">Rodar varredura agora</button></form>}>
           <table className="tabela">
             <thead><tr><th>Fonte</th><th>Status</th><th className="text-right">Consultas (7d)</th><th className="text-right">Erros (7d)</th><th className="text-right">Custo/consulta</th><th>Última falha</th><th /></tr></thead>
