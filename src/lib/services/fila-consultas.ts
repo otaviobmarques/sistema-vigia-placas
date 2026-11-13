@@ -7,6 +7,7 @@ import { sistema } from "../db";
 import { urlApp } from "../url";
 import { consultarPlaca } from "./monitoramento";
 import { despacharOutbox } from "./despacho";
+import { consultarAnttCliente } from "./antt";
 
 export const ROTA_CONSULTA = "/api/interno/consultar";
 const INTERVALO_MS = 100; // espaça os disparos para não abrir centenas de chamadas às fontes no mesmo instante
@@ -28,6 +29,31 @@ export async function consultarAgora(ids: string[]) {
   }
   await sistema((db) => despacharOutbox(db)).catch(() => undefined);
   return { ok, erros, novas };
+}
+
+/** ANTT/SIFAMA de cada cliente (consulta por CNPJ, não por placa). */
+export async function consultarAnttAgora(clientes: string[]) {
+  for (const id of clientes) await sistema((db) => consultarAnttCliente(db, id)).catch((e) => console.error("ANTT falhou", id, e?.message ?? e));
+  await sistema((db) => despacharOutbox(db)).catch(() => undefined);
+}
+
+async function disparar(corpo: Record<string, string[]>) {
+  const r = await fetch(`${urlApp()}${ROTA_CONSULTA}`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${process.env.CRON_SECRET}`, "content-type": "application/json" },
+    body: JSON.stringify(corpo),
+    signal: AbortSignal.timeout(30_000),
+  }).catch(() => null);
+  return r?.status === 202;
+}
+
+/** Uma execução por cliente com ANTT ativa. Sem fila (local), consulta aqui mesmo. */
+export async function enfileirarAntt(clientes: string[]) {
+  if (!clientes.length) return { enviadas: 0 };
+  if (!filaSeparada()) { await consultarAnttAgora(clientes); return { enviadas: clientes.length }; }
+  let enviadas = 0;
+  for (const id of clientes) { if (await disparar({ antt: [id] })) enviadas++; await new Promise((r) => setTimeout(r, INTERVALO_MS)); }
+  return { enviadas };
 }
 
 /** Dispara uma execução por placa. Espera só o "recebido" (202) de cada uma, não a consulta. */

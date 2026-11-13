@@ -18,7 +18,8 @@ import { GRAVIDADES, type Gravidade } from "@/lib/domain/ctb";
 import { tipoDocumento, somenteDocumento, validarPlaca, validarRenavam } from "@/lib/domain/validators";
 import { adicionarAoCarrinho, aprovarPagamento, cancelarPagamento, confirmarPagamento, criarPagamento } from "@/lib/services/pagamentos";
 import { consultarPlaca, varredura } from "@/lib/services/monitoramento";
-import { enfileirarConsultas } from "@/lib/services/fila-consultas";
+import { enfileirarAntt, enfileirarConsultas } from "@/lib/services/fila-consultas";
+import { cifrar } from "@/lib/cofre";
 import { indicarCondutor, aceitarIndicacao, protocolarIndicacao } from "@/lib/services/indicacao";
 import { pedirDefesa, atualizarDefesa } from "@/lib/services/defesa";
 import { fecharMes } from "@/lib/services/faturamento";
@@ -792,12 +793,18 @@ export async function salvarCobrancaCliente(f: FormData) {
   const preco = lerPrecoPersonalizado(f, "/carteira", sessao)!;
   const cob = lerCobranca(f);
   const clienteId = s(f, "clienteId");
+  const antt = f.has("antt_login") ? lerAcessoAntt(f) : null;
+  if (antt?.erro) ir("/carteira", { erro: antt.erro });
   await noEscopo(sessao, async (db) => {
     await db.q(
       `update clientes set preco_placa_personalizado = $2, saving_bps_personalizado = $3, forma_cobranca = $4, ciclo_fechamento = $5, vencimento_dias = $6,
          preco_defesa_personalizado = $7, taxa_conv_tipo_personalizado = $8, taxa_conv_valor_personalizado = $9, sne_cadastrado = $10, sne_desde = $11 where id = $1`,
       [clienteId, preco.preco, preco.saving, cob.forma, cob.ciclo, cob.vencimento, preco.defesa, preco.taxaTipo, preco.taxaValor, f.get("sne_cadastrado") === "on", f.get("sne_cadastrado") === "on" ? s(f, "sne_desde") || null : null],
     );
+    if (antt) {
+      await gravarAcessoAntt(db, clienteId, antt);
+      if (antt.ativo) after(() => enfileirarAntt([clienteId]).then(() => undefined));
+    }
     await auditar(db, { usuarioId: sessao.usuarioId, clienteId, acao: "cobranca_cliente", entidade: "cliente", entidadeId: clienteId, dados: { ...preco, ...cob } });
   });
   revalidatePath("/", "layout");
@@ -873,6 +880,9 @@ export async function criarCliente(f: FormData) {
       }
       if (grupoId) await db.q("update clientes set grupo_id = $2 where id = $1", [novoId, grupoId]);
       await db.q("update clientes set sne_cadastrado = $2, sne_desde = $3 where id = $1", [novoId, f.get("sne_cadastrado") === "on", f.get("sne_cadastrado") === "on" ? s(f, "sne_desde") || null : null]);
+      const antt = lerAcessoAntt(f);
+      if (antt.erro) throw new Error(antt.erro);
+      if (antt.login) await gravarAcessoAntt(db, novoId, antt);
       if (preco) {
         await db.q(
           "update clientes set preco_placa_personalizado = $2, saving_bps_personalizado = $3, preco_defesa_personalizado = $4, taxa_conv_tipo_personalizado = $5, taxa_conv_valor_personalizado = $6 where id = $1",
@@ -1205,4 +1215,55 @@ export async function excluirGrupo(f: FormData) {
   });
   revalidatePath("/", "layout");
   ir(VOLTA_GRUPOS, nome ? { ok: `“${nome}” excluído. Os clientes continuam cadastrados.` } : { erro: "Grupo não encontrado." });
+}
+
+// ---------------- ANTT / SIFAMA (acesso do cliente) ----------------
+
+/** Lê o bloco "ANTT / SIFAMA" do formulário. Senha em branco mantém a guardada. */
+function lerAcessoAntt(f: FormData): { ativo: boolean; login: string | null; senha: string | null; representado: string | null; erro?: string } {
+  const ativo = f.get("antt_ativo") === "on";
+  const login = somenteDocumento(s(f, "antt_login")) || null;
+  const senha = String(f.get("antt_senha") ?? "") || null;
+  const representado = somenteDocumento(s(f, "antt_cnpj_representado")) || null;
+  if (login && !tipoDocumento(login)) return { ativo, login, senha, representado, erro: "Login do SIFAMA: informe um CPF ou CNPJ válido." };
+  if (representado && tipoDocumento(representado) !== "PJ") return { ativo, login, senha, representado, erro: "CNPJ representado inválido." };
+  if (ativo && !login) return { ativo, login, senha, representado, erro: "Para ativar a ANTT, informe o login (CPF ou CNPJ) do SIFAMA." };
+  return { ativo, login, senha, representado };
+}
+
+async function gravarAcessoAntt(db: Db, clienteId: string, a: ReturnType<typeof lerAcessoAntt>) {
+  await db.q(
+    `update clientes set antt_ativo = $2, antt_login = $3, antt_cnpj_representado = $4,
+       antt_senha_cifrada = case when $5::text is null then antt_senha_cifrada else $5 end where id = $1`,
+    [clienteId, a.ativo, a.login, a.representado, a.senha ? cifrar(a.senha) : null],
+  );
+}
+
+export async function salvarAcessoAntt(f: FormData) {
+  const sessao = await exigirSessao(["franqueadora", "franqueado"]);
+  const clienteId = s(f, "clienteId");
+  const volta = s(f, "volta") || "/gestao/antt";
+  const a = lerAcessoAntt(f);
+  if (a.erro) ir(volta, { erro: a.erro });
+  const temSenha = await noEscopo(sessao, async (db) => {
+    const c = await db.one<{ antt_senha_cifrada: string | null }>("select antt_senha_cifrada from clientes where id = $1", [clienteId]);
+    if (!c) throw new Error("Cliente não encontrado.");
+    await gravarAcessoAntt(db, clienteId, a);
+    await auditar(db, { usuarioId: sessao.usuarioId, clienteId, acao: "antt_acesso_salvo", entidade: "cliente", entidadeId: clienteId, dados: { ativo: a.ativo, senhaNova: !!a.senha } });
+    return !!(a.senha || c.antt_senha_cifrada);
+  });
+  if (a.ativo && !temSenha) ir(volta, { erro: "Acesso salvo, mas falta a senha do SIFAMA para consultar." });
+  if (a.ativo) after(() => enfileirarAntt([clienteId]).then(() => undefined));
+  revalidatePath("/", "layout");
+  ir(volta, { ok: a.ativo ? "Acesso ao SIFAMA salvo. A consulta da ANTT já está rodando: o resultado aparece aqui em instantes." : "Acesso ao SIFAMA salvo (ANTT desativada para este cliente)." });
+}
+
+export async function consultarAnttJa(f: FormData) {
+  const sessao = await exigirSessao(["franqueadora", "franqueado"]);
+  const clienteId = s(f, "clienteId");
+  const volta = s(f, "volta") || "/gestao/antt";
+  const ok = await noEscopo(sessao, async (db) => !!(await db.one("select 1 from clientes where id = $1 and antt_ativo", [clienteId])));
+  if (!ok) ir(volta, { erro: "ANTT não está ativa para este cliente." });
+  after(() => enfileirarAntt([clienteId]).then(() => undefined));
+  ir(volta, { ok: "Consulta da ANTT enviada. O resultado aparece aqui em instantes." });
 }
