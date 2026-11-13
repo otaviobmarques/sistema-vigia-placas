@@ -18,7 +18,7 @@ export default async function Carteira({ searchParams }: { searchParams: Promise
   const mes = hojeISO().slice(0, 7);
   const d = await noEscopo(s, async (db) => {
     const clientes = await db.q(
-      `select c.id, c.nome, c.documento, c.segmento, (select g.nome from grupos_economicos g where g.id = c.grupo_id) as grupo, pl.nome as plano, coalesce(c.preco_placa_personalizado, pl.preco_placa) as preco_placa, c.preco_placa_personalizado, c.saving_bps_personalizado, pl.saving_bps as plano_saving_bps, c.forma_cobranca, c.ciclo_fechamento, c.vencimento_dias, c.bloqueado_em, c.motivo_bloqueio, c.preco_defesa_personalizado, c.taxa_conv_tipo_personalizado, c.taxa_conv_valor_personalizado, f.nome as franqueado, f.repasse_mensalidade_bps, f.repasse_saving_bps,
+      `select c.id, c.nome, c.documento, c.segmento, c.sne_cadastrado, c.sne_desde, (select g.nome from grupos_economicos g where g.id = c.grupo_id) as grupo, pl.nome as plano, coalesce(c.preco_placa_personalizado, pl.preco_placa) as preco_placa, c.preco_placa_personalizado, c.saving_bps_personalizado, pl.saving_bps as plano_saving_bps, c.forma_cobranca, c.ciclo_fechamento, c.vencimento_dias, c.bloqueado_em, c.motivo_bloqueio, c.preco_defesa_personalizado, c.taxa_conv_tipo_personalizado, c.taxa_conv_valor_personalizado, f.nome as franqueado, f.repasse_mensalidade_bps, f.repasse_saving_bps,
          (select count(*) from placas p where p.cliente_id = c.id and p.status <> 'pausada') as placas,
          (select count(*) from multas m where m.cliente_id = c.id and m.estado not in ('paga','cancelada')) as abertas,
          (select coalesce(sum(valor),0) from economias e where e.cliente_id = c.id and e.mes = $1 and e.comprovada) as economia_mes,
@@ -65,17 +65,22 @@ export default async function Carteira({ searchParams }: { searchParams: Promise
                   const p = prazos(c.id);
                   return (
                     <tr key={c.id}>
-                      <td><div className="font-semibold">{c.nome}{c.bloqueado_em && <span className="ml-2 rounded bg-rec-100 px-1.5 py-0.5 text-[11px] font-bold text-rec">Bloqueado</span>}</div>{c.bloqueado_em && c.motivo_bloqueio && <div className="text-xs text-rec">{c.motivo_bloqueio}</div>}<div className="text-xs text-suave">{c.grupo && <span className="mr-1 rounded bg-nevoa px-1.5 py-0.5 font-semibold text-vigia">🏢 {c.grupo}</span>}{c.segmento} · plano {c.plano}{s.nivel === "franqueadora" && franquiasAtivas() ? ` · ${c.franqueado ?? "direto"}` : ""}</div></td>
+                      <td><div className="font-semibold">{c.nome}{c.bloqueado_em && <span className="ml-2 rounded bg-rec-100 px-1.5 py-0.5 text-[11px] font-bold text-rec">Bloqueado</span>}</div>{c.bloqueado_em && c.motivo_bloqueio && <div className="text-xs text-rec">{c.motivo_bloqueio}</div>}<div className="text-xs text-suave">{c.grupo && <span className="mr-1 rounded bg-nevoa px-1.5 py-0.5 font-semibold text-vigia">🏢 {c.grupo}</span>}{c.sne_cadastrado && <span className="mr-1 rounded bg-economia-100 px-1.5 py-0.5 font-semibold text-economia" title="Registrado no SNE: multas com direito a 40%">SNE 40%</span>}{c.segmento} · plano {c.plano}{s.nivel === "franqueadora" && franquiasAtivas() ? ` · ${c.franqueado ?? "direto"}` : ""}</div></td>
                       <td className="whitespace-nowrap text-xs">
                         <b className="num">{c.preco_placa ? brl(c.preco_placa) : "[DEFINIR]"}</b>/placa
                         <div className="text-suave">saving {((c.saving_bps_personalizado ?? c.plano_saving_bps ?? 2000) / 100).toLocaleString("pt-BR")}%{c.preco_placa_personalizado !== null || c.saving_bps_personalizado !== null ? <span className="ml-1 rounded bg-ambar-100 px-1 font-semibold text-[#6b4700]">personalizado</span> : ""}</div>
                         <div className="text-suave">{FORMA[c.forma_cobranca] ?? c.forma_cobranca} · fecha {(CICLOS[c.ciclo_fechamento as Ciclo] ?? "Mensal").split(" (")[0].toLowerCase()} · vence +{c.vencimento_dias}d</div>
                         {s.nivel === "franqueadora" && (
                           <details className="relative">
-                            <summary className="link cursor-pointer list-none text-xs">Alterar cobrança</summary>
+                            <summary className="link cursor-pointer list-none text-xs">Alterar cobrança e SNE</summary>
                             <form action={salvarCobrancaCliente} className="mt-2 w-80 space-y-2 rounded-xl border border-borda bg-white p-3 shadow-lg">
                               <input type="hidden" name="clienteId" value={c.id} />
                               <CamposPrecosCliente c={c} compacto plano={c.plano} />
+                              <div className="rounded-xl border border-borda p-3">
+              <label className="flex items-center gap-2 text-sm font-semibold"><input type="checkbox" name="sne_cadastrado" defaultChecked={!!c.sne_cadastrado} className="h-4 w-4 accent-vigia" /> Registrado no SNE</label>
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-suave"><span>Desde</span><input type="date" name="sne_desde" defaultValue={c.sne_desde ? String(c.sne_desde).slice(0, 10) : ""} className="campo w-40 py-1" /><span>(em branco = vale para todas as multas)</span></div>
+              <p className="mt-1 text-[11px] text-suave">Proprietário com adesão ao Sistema de Notificação Eletrônica: as multas de órgãos aderentes têm direito a 40% de desconto.</p>
+            </div>
                               <div><label className="rotulo">Forma de pagamento</label><select name="forma_cobranca" defaultValue={c.forma_cobranca} className="campo py-1.5"><option value="pix">Pix</option><option value="boleto">Boleto</option><option value="cartao">Cartão de crédito</option></select></div>
                               <div className="grid grid-cols-2 gap-2">
                                 <div><label className="rotulo">Fechamento</label><select name="ciclo_fechamento" defaultValue={c.ciclo_fechamento} className="campo py-1.5">{Object.entries(CICLOS).map(([k, v]) => <option key={k} value={k}>{v.split(" (")[0]}</option>)}</select></div>

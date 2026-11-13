@@ -1,5 +1,5 @@
 import type { Db } from "../db";
-import { consultarMultas, erroDeConta, FONTES, fontesParaUf } from "../integrations/infosimples";
+import { COMPLEMENTARES, consultarMultas, erroDeConta, FONTES, infosimplesCobreUf, modoSimulado } from "../integrations/infosimples";
 import { consultarDirectData, directDataAtiva, SERVICO_DIRECTDATA } from "../integrations/directdata";
 
 function nomeFonte(servico: string) {
@@ -88,7 +88,7 @@ export async function consultarPlaca(db: Db, placaId: string, opts: { avulsa?: b
     estrategia: cfg?.estrategia_fontes ?? "principal_reserva",
     principal: cfg?.fonte_principal ?? "directdata",
     disponiveis,
-    infosimplesCobreUf: fontesParaUf(p.uf).length > 1,
+    infosimplesCobreUf: infosimplesCobreUf(p.uf),
     ultimaFonte: (p.ultima_fonte as FonteDados | null) ?? null,
   });
 
@@ -102,6 +102,12 @@ export async function consultarPlaca(db: Db, placaId: string, opts: { avulsa?: b
   let rodadas = await Promise.all(escolha.primeiras.map(consultar));
   const algumaOk = (rs: typeof rodadas) => rs.some((x) => x.detalhes.some((d) => d.ok));
   if (!algumaOk(rodadas) && escolha.reserva) rodadas = [...rodadas, await consultar(escolha.reserva)];
+  // DNIT (e outras complementares) rodam sempre: se a Infosimples não entrou nesta consulta, chama só elas.
+  const comp = COMPLEMENTARES.filter((s) => !desligadas.has(s));
+  if (infosimplesLigada && comp.length && !modoSimulado() && !rodadas.some((x) => x.fonte === "infosimples")) {
+    const r = await consultarMultas(p.placa, p.renavam, p.uf, { desligadas, apenas: comp });
+    if (r.detalhes.length) rodadas = [...rodadas, { fonte: "infosimples" as const, detalhes: r.detalhes, simulado: false }];
+  }
   const fonteUsada = rodadas.find((x) => x.detalhes.some((d) => d.ok))?.fonte ?? null;
   if (fonteUsada) await db.q("update placas set ultima_fonte = $2 where id = $1", [p.id, fonteUsada]);
   const ri = { simulado: rodadas.some((x) => x.simulado), detalhes: rodadas.filter((x) => x.fonte === "infosimples").flatMap((x) => x.detalhes) };

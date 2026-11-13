@@ -1,5 +1,5 @@
 /** Estimativa de custo de dados pela regra de consulta (usada no backoffice). */
-import { FONTES, fontesParaUf, modoSimulado } from "../integrations/infosimples";
+import { COMPLEMENTARES, FONTES, fontesParaUf, infosimplesCobreUf, modoSimulado } from "../integrations/infosimples";
 import { directDataAtiva } from "../integrations/directdata";
 import { consultasPorMes, custoPorConsulta, escolherFontes, type EstrategiaFontes, type FonteDados } from "../domain/monitoramento";
 
@@ -15,8 +15,12 @@ export function fontesDisponiveis(): FonteDados[] {
 }
 
 export function custoConsultaPlaca(uf: string, estrategia: EstrategiaFontes, principal: FonteDados, disponiveis = fontesDisponiveis()) {
-  const escolha = escolherFontes({ estrategia, principal, disponiveis, infosimplesCobreUf: fontesParaUf(uf).length > 1, ultimaFonte: null });
-  return { escolha, custo: custoPorConsulta(escolha, custosPorFonte(uf)) };
+  const escolha = escolherFontes({ estrategia, principal, disponiveis, infosimplesCobreUf: infosimplesCobreUf(uf), ultimaFonte: null });
+  // Complementares (DNIT) rodam sempre; quando a Infosimples não é a primeira opção, entram à parte.
+  const complemento = disponiveis.includes("infosimples") && !escolha.primeiras.includes("infosimples")
+    ? FONTES.filter((f) => COMPLEMENTARES.includes(f.servico)).reduce((a, f) => a + Math.round((0.2 + f.extra) * 100), 0)
+    : 0;
+  return { escolha, custo: custoPorConsulta(escolha, custosPorFonte(uf)) + complemento };
 }
 
 export function custoMensalPlaca(uf: string, frequencia: string, estrategia: EstrategiaFontes, principal: FonteDados) {

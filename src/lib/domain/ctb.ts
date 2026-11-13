@@ -2,7 +2,7 @@
  * Regras do Código de Trânsito Brasileiro (Lei 9.503/1997) automatizadas pelo Vigia Placa.
  * Revisar com advogado de trânsito e conferir no texto oficial (planalto.gov.br).
  */
-import { aplicarFator, type Centavos } from "./money";
+import { aplicarFator, brl, type Centavos } from "./money";
 import { diasEntre, somarDias, type DataISO } from "./dates";
 
 export type Gravidade = "leve" | "media" | "grave" | "gravissima";
@@ -98,6 +98,26 @@ export function melhorValorHoje(m: MultaRegra, hoje: DataISO): { valor: Centavos
   if (!noPrazo) return { valor: v.cheio, desconto: null };
   if (v.com40 !== null && m.estado !== "em_defesa") return { valor: v.com40, desconto: "40" };
   return { valor: v.com20, desconto: "20" };
+}
+
+/**
+ * Selo de desconto da multa: qual faixa vale hoje (40% SNE, 20% padrão ou nenhuma) e por quê, para a dica ao passar o mouse.
+ * 40%: proprietário no SNE antes da infração, órgão aderente, sem recurso e pagando até o vencimento (art. 284, § 1º).
+ * 20%: pagando até o vencimento (art. 284, caput).
+ */
+export function seloDesconto(m: MultaRegra, hoje: DataISO): { faixa: "40" | "20" | null; texto: string } {
+  const v = valoresMulta(m);
+  const br = (d: string) => d.split("-").reverse().join("/");
+  if (m.estado === "paga" || m.estado === "cancelada") return { faixa: null, texto: m.estado === "paga" ? "Multa já paga." : "Multa cancelada." };
+  if (m.vencimento && hoje > m.vencimento) return { faixa: null, texto: `Sem desconto: o vencimento foi em ${br(m.vencimento)}. O valor agora é o cheio (${brl(v.cheio)}).` };
+  const ate = m.vencimento ? ` até ${br(m.vencimento)}` : " até o vencimento";
+  if (v.com40 !== null && m.estado !== "em_defesa")
+    return { faixa: "40", texto: `Elegível a 40% (SNE): pague ${brl(v.com40)}${ate} sem recorrer. O proprietário está no SNE desde antes da infração e o órgão é aderente.` };
+  const motivo = m.estado === "em_defesa" ? "a multa está em recurso (os 40% exigem não recorrer)"
+    : !m.sneAdesaoEm ? "o cliente não está registrado no SNE"
+    : !m.orgaoAderenteSne ? "o órgão autuador não aderiu ao SNE"
+    : "a adesão ao SNE foi depois da infração";
+  return { faixa: "20", texto: `Elegível a 20%: pague ${brl(v.com20)}${ate}. Sem 40% porque ${motivo}. Dá para recorrer mesmo pagando com 20%.` };
 }
 
 /** Art. 261, I: limite de pontos em 12 meses conforme o número de gravíssimas. */

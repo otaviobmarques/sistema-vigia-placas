@@ -795,13 +795,13 @@ export async function salvarCobrancaCliente(f: FormData) {
   await noEscopo(sessao, async (db) => {
     await db.q(
       `update clientes set preco_placa_personalizado = $2, saving_bps_personalizado = $3, forma_cobranca = $4, ciclo_fechamento = $5, vencimento_dias = $6,
-         preco_defesa_personalizado = $7, taxa_conv_tipo_personalizado = $8, taxa_conv_valor_personalizado = $9 where id = $1`,
-      [clienteId, preco.preco, preco.saving, cob.forma, cob.ciclo, cob.vencimento, preco.defesa, preco.taxaTipo, preco.taxaValor],
+         preco_defesa_personalizado = $7, taxa_conv_tipo_personalizado = $8, taxa_conv_valor_personalizado = $9, sne_cadastrado = $10, sne_desde = $11 where id = $1`,
+      [clienteId, preco.preco, preco.saving, cob.forma, cob.ciclo, cob.vencimento, preco.defesa, preco.taxaTipo, preco.taxaValor, f.get("sne_cadastrado") === "on", f.get("sne_cadastrado") === "on" ? s(f, "sne_desde") || null : null],
     );
     await auditar(db, { usuarioId: sessao.usuarioId, clienteId, acao: "cobranca_cliente", entidade: "cliente", entidadeId: clienteId, dados: { ...preco, ...cob } });
   });
   revalidatePath("/", "layout");
-  ir("/carteira", { ok: "Cobrança do cliente salva. Vale a partir da próxima fatura." });
+  ir("/carteira", { ok: "Dados do cliente salvos. A cobrança nova vale a partir da próxima fatura; o SNE já vale para as multas." });
 }
 
 export async function bloquearCliente(f: FormData) {
@@ -872,6 +872,7 @@ export async function criarCliente(f: FormData) {
         if (!grupoId) { grupoId = randomUUID(); await db.q("insert into grupos_economicos (id, nome) values ($1, $2)", [grupoId, grupoNovo]); }
       }
       if (grupoId) await db.q("update clientes set grupo_id = $2 where id = $1", [novoId, grupoId]);
+      await db.q("update clientes set sne_cadastrado = $2, sne_desde = $3 where id = $1", [novoId, f.get("sne_cadastrado") === "on", f.get("sne_cadastrado") === "on" ? s(f, "sne_desde") || null : null]);
       if (preco) {
         await db.q(
           "update clientes set preco_placa_personalizado = $2, saving_bps_personalizado = $3, preco_defesa_personalizado = $4, taxa_conv_tipo_personalizado = $5, taxa_conv_valor_personalizado = $6 where id = $1",

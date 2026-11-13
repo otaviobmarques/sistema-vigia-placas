@@ -46,6 +46,8 @@ export interface FonteInfosimples {
 /** Fontes que funcionam só com placa e Renavam (sem login gov.br nem certificado do proprietário). */
 export const FONTES: FonteInfosimples[] = [
   { servico: "prf/infracoes", nome: "PRF · rodovias federais", uf: "*", orgaoPadrao: { id: "PRF", nome: "Polícia Rodoviária Federal" }, parametros: ["placa", "renavam"], extra: 0.04 },
+  // DNIT: excesso de peso e radares em rodovias federais. Aceita login gov.br/certificado, mas consulta por placa e Renavam.
+  { servico: "dnit/infracoes", nome: "DNIT · rodovias federais", uf: "*", orgaoPadrao: { id: "DNIT", nome: "DNIT" }, parametros: ["placa", "renavam"], extra: 0.04, aConfirmar: true },
   { servico: "detran/al/infracoes", nome: "Detran-AL", uf: "AL", orgaoPadrao: { id: "DETRAN-AL", nome: "Detran-AL" }, parametros: ["placa", "renavam"], extra: 0.04 },
   { servico: "detran/am/multas", nome: "Detran-AM", uf: "AM", orgaoPadrao: { id: "DETRAN-AM", nome: "Detran-AM" }, parametros: ["placa", "renavam"], extra: 0.04 },
   { servico: "detran/ce/multas", nome: "Detran-CE", uf: "CE", orgaoPadrao: { id: "DETRAN-CE", nome: "Detran-CE" }, parametros: ["placa", "renavam"], extra: 0 },
@@ -64,6 +66,12 @@ export const UFS_EXIGEM_LOGIN = ["SP", "PR", "BA", "DF", "GO", "RS", "SC"];
 export function fontesParaUf(uf: string): FonteInfosimples[] {
   return FONTES.filter((f) => f.uf === "*" || f.uf === uf.toUpperCase());
 }
+
+/** A Infosimples tem fonte estadual (Detran) sem login para esta UF. As federais (PRF, DNIT) valem para todas. */
+export const infosimplesCobreUf = (uf: string) => FONTES.some((f) => f.uf === uf.toUpperCase());
+
+/** Fontes consultadas sempre, qualquer que seja a regra (Direct Data/Serpro não traz essas autuações). */
+export const COMPLEMENTARES = ["dnit/infracoes"];
 
 export interface ResultadoFonte {
   servico: string;
@@ -129,13 +137,13 @@ export async function consultarMultas(
   placa: string,
   renavam: string,
   uf: string,
-  opts: { documento?: string | null; desligadas?: Set<string> } = {},
+  opts: { documento?: string | null; desligadas?: Set<string>; apenas?: string[] } = {},
 ): Promise<ResultadoConsulta> {
   if (modoSimulado()) {
     const r = simular(placa, uf);
     return { ...r, detalhes: [{ servico: "simulado", ok: true, codigo: 200, multas: r.multas, custo: r.custo }] };
   }
-  const fontes = fontesParaUf(uf).filter((f) => !opts.desligadas?.has(f.servico));
+  const fontes = fontesParaUf(uf).filter((f) => !opts.desligadas?.has(f.servico) && (!opts.apenas || opts.apenas.includes(f.servico)));
   const detalhes = await Promise.all(
     fontes.map(async (f): Promise<ResultadoFonte> => {
       try {
@@ -221,8 +229,10 @@ function gravidadeDe(c: number, texto?: any, pontos?: number | null): Gravidade 
 
 /** Multa já paga ou cancelada na fonte não entra como nova. */
 function encerrada(b: any): boolean {
+  if (/^(sim|s|true|1)$/i.test(String(b?.debito_quitado ?? "").trim())) return true;
+  if (String(b?.causa_cancelamento ?? "").trim()) return true;
   const s = String(primeiro(b, "pagamento_situacao", "situacao", "status", "infracao_status", "fase") ?? "").toLowerCase();
-  return /\b(paga|pago|quitad|cancelad|arquivad|baixad)/.test(s) && !/a pagar|não pag|nao pag/.test(s);
+  return /\b(paga|pago|quitad[ao]s?|cancelad[ao]s?|arquivad[ao]s?|baixad[ao]s?)\b/.test(s) && !/a pagar|não pag|nao pag/.test(s);
 }
 
 function normalizar(b: any, f: FonteInfosimples): MultaEncontrada | null {
@@ -240,14 +250,14 @@ function normalizar(b: any, f: FonteInfosimples): MultaEncontrada | null {
       .toUpperCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40),
     orgaoNome,
     autoInfracao: String(auto).trim(),
-    codigoInfracao: String(primeiro(b, "codigo_infracao", "infracao_codigo", "codigo", "enquadramento", "amparo") ?? "0000").replace(/\D/g, "").slice(0, 8) || "0000",
+    codigoInfracao: String(primeiro(b, "codigo_infracao", "infracao_codigo", "codigo_enquadramento", "codigo", "enquadramento", "amparo") ?? "0000").replace(/\D/g, "").slice(0, 8) || "0000",
     descricao: String(primeiro(b, "descricao", "infracao_descricao", "descricao_infracao", "infracao") ?? "Infração de trânsito").trim(),
     gravidade,
     pontos: pontos ?? GRAVIDADES[gravidade].pontos,
     valor,
     dataInfracao: dataParaISO(dataHora) ?? hojeISO(),
     hora: String(dataHora ?? "").match(/\b(\d{2}:\d{2})/)?.[1] ?? primeiro(b, "hora", "hora_infracao"),
-    local: primeiro(b, "local", "local_infracao", "endereco"),
+    local: [primeiro(b, "local", "local_infracao", "endereco"), primeiro(b, "municipio")].filter(Boolean).join(" · ") || null,
     notificadaEm: dataParaISO(primeiro(b, "data_notificacao", "expedicao", "data_emissao", "emissao", "data_expedicao")),
     vencimento: dataParaISO(primeiro(b, "boleto_vencimento", "vencimento", "data_vencimento")),
     linhaDigitavel: (primeiro(b, "boleto_linha_digitavel", "linha_digitavel", "boleto_codigo_barras", "codigo_barras") ?? "").toString().replace(/\D/g, "") || null,
