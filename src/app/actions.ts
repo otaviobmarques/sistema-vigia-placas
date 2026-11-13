@@ -1041,6 +1041,20 @@ export async function reativarFonte(f: FormData) {
   ir("/backoffice?aba=fontes", { ok: "Fonte atualizada." });
 }
 
+/** Preço por consulta da Direct Data (a API não informa o valor cobrado). Infosimples usa o valor real de cada resposta. */
+export async function salvarPrecoFonte(f: FormData) {
+  const sessao = await exigirAdminSistema("/backoffice?aba=fontes");
+  const id = s(f, "id");
+  if (id !== "directdata") ir("/backoffice?aba=fontes", { erro: "Só o preço da Direct Data é cadastrado; a Infosimples informa o valor real em cada consulta." });
+  const centavos = Math.round(Number(s(f, "preco").replace(/\./g, "").replace(",", ".")) * 100);
+  if (!Number.isFinite(centavos) || centavos < 0 || centavos > 100000) ir("/backoffice?aba=fontes", { erro: "Preço inválido." });
+  await noEscopo(sessao, async (db) => {
+    await db.q("update fontes set custo = $2 where id = $1", [id, centavos]);
+    await auditar(db, { usuarioId: sessao.usuarioId, acao: "preco_fonte", entidade: "fonte", dados: { id, centavos } });
+  });
+  ir("/backoffice?aba=fontes", { ok: `Preço da Direct Data atualizado para ${(centavos / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} por consulta com sucesso. Vale para as próximas consultas.` });
+}
+
 export async function rodarVarredura() {
   await exigirAdminSistema("/backoffice?aba=fontes");
   const r = await sistema((db) => varredura(db));

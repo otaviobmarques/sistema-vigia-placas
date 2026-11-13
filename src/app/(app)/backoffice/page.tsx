@@ -6,7 +6,7 @@ import { directDataAtiva, SERVICO_DIRECTDATA } from "@/lib/integrations/directda
 import { TestarFonte } from "@/components/testar-fonte";
 import { asaasSimulado } from "@/lib/integrations/asaas";
 import { Abas, Aviso, Cabecalho, Card, Mensagem, Numero } from "@/components/ui";
-import { atualizarDefesaAction, reativarFonte, rodarVarredura, salvarConfigGlobal, salvarFranqueado, salvarRegraCliente, salvarRegraFontes, transferirCliente } from "../../actions";
+import { atualizarDefesaAction, reativarFonte, salvarPrecoFonte, rodarVarredura, salvarConfigGlobal, salvarFranqueado, salvarRegraCliente, salvarRegraFontes, transferirCliente } from "../../actions";
 import { ESTRATEGIAS, rotuloFrequencia, type EstrategiaFontes, type FonteDados } from "@/lib/domain/monitoramento";
 import { custoConsultaPlaca, custoMensalPlaca, fontesDisponiveis, UFS_EXEMPLO } from "@/lib/services/custos";
 import { CampoFrequencia } from "@/components/frequencia";
@@ -225,7 +225,14 @@ export default async function Backoffice({ searchParams }: { searchParams: Promi
                 <tr key={f.id}>
                   <td className="font-semibold">{f.nome}{f.id === "infosimples" && modoSimulado() && <div className="text-xs font-normal text-[#8a5a00]">simulada</div>}</td>
                   <td>{f.ativa ? <span className="text-economia">● ativa</span> : <span className="text-rec">● desligada{f.desligada_em ? " automaticamente" : ""}</span>}{f.falhas_seguidas > 0 && <div className="text-xs text-suave">{f.falhas_seguidas} falha(s) seguida(s)</div>}</td>
-                  <td className="text-right">{f.c7}</td><td className="text-right">{f.e7}</td><td className="num text-right">{brl(f.custo)}</td>
+                  <td className="text-right">{f.c7}</td><td className="text-right">{f.e7}</td><td className="num text-right">{f.id === "directdata" ? (
+                    <form action={salvarPrecoFonte} className="flex items-center justify-end gap-1">
+                      <input type="hidden" name="id" value={f.id} />
+                      <span className="text-xs text-suave">R$</span>
+                      <input name="preco" defaultValue={(Number(f.custo) / 100).toFixed(2).replace(".", ",")} inputMode="decimal" className="campo w-20 py-1 text-right text-sm" aria-label="Preço por consulta da Direct Data" />
+                      <button className="btn-leve btn-sm">Salvar</button>
+                    </form>
+                  ) : f.id.startsWith("infosimples") ? <span title="Valor real informado pela Infosimples em cada consulta">{brl(f.custo)}<div className="text-[10px] font-normal text-suave">estimado · real vem da API</div></span> : brl(f.custo)}</td>
                   <td className="max-w-xs truncate text-xs text-suave">{f.ultima_falha ?? "—"}</td>
                   <td><form action={reativarFonte}><input type="hidden" name="id" value={f.id} /><button className="btn-leve btn-sm">{f.ativa ? "Desligar" : "Ligar"}</button></form></td>
                 </tr>
