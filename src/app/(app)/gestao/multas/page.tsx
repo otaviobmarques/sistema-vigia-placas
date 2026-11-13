@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import Link from "next/link";
 import { exigirSessao, noEscopo } from "@/lib/auth";
 import { brl } from "@/lib/domain/money";
@@ -11,7 +12,7 @@ import { entrarCliente } from "../../../actions";
 import { ehNova, SeloNova } from "@/components/selo-nova";
 import { LogoOrgao } from "@/components/logo-orgao";
 import { SelosDesconto } from "@/components/selo-desconto";
-import { selosDesconto } from "@/lib/domain/ctb";
+import { selosDesconto, valoresMulta } from "@/lib/domain/ctb";
 import { regra } from "@/lib/services/multas";
 
 const SeloContagem = ({ n }: { n: number }) => <span className="rounded-full bg-ambar px-1.5 text-xs font-bold text-vigia">{n}</span>;
@@ -34,6 +35,45 @@ export default async function MultasEmAberto({ searchParams }: { searchParams: P
     ),
   }));
   const valor = d.multas.reduce((a, m) => a + Number(m.valor), 0);
+  // Valores com desconto de cada multa: 20% até o vencimento; 40% só com SNE (os mesmos critérios dos selos).
+  const comValores = d.multas.map((m) => {
+    const r = regra(m as any);
+    const selos = selosDesconto(r, hoje);
+    const v = valoresMulta(r);
+    const c20 = selos.some((x) => x.faixa === "20") ? v.com20 : null;
+    const c40 = selos.some((x) => x.faixa === "40") ? v.com40 : null;
+    return { m, selos, cheio: Number(m.valor), c20, c40 };
+  });
+  type Linha = (typeof comValores)[number];
+  // Agrupa por cliente (na ordem do mais urgente) para o subtotal de cada um.
+  const grupos: Array<{ cliente: string; linhas: Linha[] }> = [];
+  for (const l of comValores) {
+    const g = grupos.find((x) => x.cliente === l.m.cliente);
+    g ? g.linhas.push(l) : grupos.push({ cliente: l.m.cliente, linhas: [l] });
+  }
+  const somar = (ls: Linha[]) => ({
+    cheio: ls.reduce((a, l) => a + l.cheio, 0),
+    // Pagando com 20% onde ainda vale (o resto pelo valor cheio).
+    c20: ls.reduce((a, l) => a + (l.c20 ?? l.cheio), 0),
+    // Pagando com o melhor desconto: 40% onde há SNE, 20% nas demais ainda no prazo.
+    c40: ls.reduce((a, l) => a + (l.c40 ?? l.c20 ?? l.cheio), 0),
+    tem20: ls.some((l) => l.c20 !== null),
+    tem40: ls.some((l) => l.c40 !== null),
+  });
+  const LinhaTotal = ({ rotulo, ls, forte = false }: { rotulo: string; ls: Linha[]; forte?: boolean }) => {
+    const t = somar(ls);
+    return (
+      <tr className={forte ? "bg-vigia text-white" : "bg-nevoa/70"}>
+        <td colSpan={5} className={`text-sm ${forte ? "font-extrabold" : "font-bold"}`}>
+          {rotulo} <span className={`font-normal ${forte ? "text-white/70" : "text-suave"}`}>({ls.length} multa{ls.length > 1 ? "s" : ""}{t.tem20 || t.tem40 ? ` · economia de até ${brl(t.cheio - t.c40)}` : ""})</span>
+        </td>
+        <td className="num text-right font-bold">{brl(t.cheio)}</td>
+        <td className="num text-right font-bold">{t.tem20 ? brl(t.c20) : "—"}</td>
+        <td className="num text-right font-bold">{t.tem40 ? brl(t.c40) : <span className={`text-xs font-semibold ${forte ? "text-white/70" : "text-suave"}`}>Inelegível</span>}</td>
+        <td />
+      </tr>
+    );
+  };
   const prazo7 = d.multas.filter((m) => m.prazo && diasEntre(hoje, m.prazo) <= 7).length;
   const semCondutor = d.multas.filter((m) => !m.condutor_indicado && m.notificada_em).length;
   const filtrado = sp.cliente || sp.placa || sp.condutor || sp.novas;
@@ -61,25 +101,32 @@ export default async function MultasEmAberto({ searchParams }: { searchParams: P
       <Card titulo={`Multas (${d.multas.length})`}>
         {d.multas.length === 0 ? <Vazio>Nenhuma multa em aberto{filtrado ? " com estes filtros" : ""}.</Vazio> : (
           <div className="-mx-5 overflow-x-auto">
-            <table className="tabela min-w-[1100px]">
-              <thead><tr><th>Cliente</th><th>Placa</th><th>Infração</th><th>Situação</th><th>Prazo</th><th>Condutor</th><th className="!text-right">Valor</th><th /></tr></thead>
+            <table className="tabela min-w-[960px]">
+              <thead><tr><th>Placa</th><th>Infração</th><th>Situação</th><th>Prazo</th><th>Condutor</th><th className="!text-right">Valor</th><th className="!text-right"><span className="rounded-full bg-ambar px-1.5 text-[11px] font-extrabold text-vigia">20%</span></th><th className="!text-right"><span className="rounded-full bg-rec px-1.5 text-[11px] font-extrabold text-white">40%</span></th><th /></tr></thead>
               <tbody>
-                {d.multas.map((m) => (
+                {grupos.map((g) => (<Fragment key={g.cliente}>
+                <tr><td colSpan={9} className="border-t-2 border-vigia/20 pt-4 text-sm font-extrabold text-vigia">🏢 {g.cliente}</td></tr>
+                {g.linhas.map(({ m, selos, c20, c40 }) => (
                   <tr key={m.id}>
-                    <td className="text-sm font-semibold">{m.cliente}</td>
                     <td><Placa placa={m.placa} tamanho="sm" /><div className="mt-1 text-xs text-suave">{m.apelido ?? ""}</div></td>
-                    <td className="text-sm"><div className="flex items-start gap-2"><SelosDesconto selos={selosDesconto(regra(m as any), hoje)} /><div>{m.descricao}{ehNova(m.criado_em) && <SeloNova />}<div className="text-xs text-suave"><LogoOrgao id={m.orgao_id} nome={m.orgao} /> · {dataBR(m.data_infracao)} · {m.pontos} pts</div></div></div></td>
+                    <td className="text-sm"><div className="flex items-start gap-2"><SelosDesconto selos={selos} /><div>{m.descricao}{ehNova(m.criado_em) && <SeloNova />}<div className="text-xs text-suave"><LogoOrgao id={m.orgao_id} nome={m.orgao} /> · {dataBR(m.data_infracao)} · {m.pontos} pts</div></div></div></td>
                     <td className="text-xs">{ESTADOS[m.estado as EstadoMulta]?.rotulo ?? m.estado}</td>
                     <td>{m.prazo ? <ChipPrazo dias={diasEntre(hoje, m.prazo)} /> : <span className="text-xs text-suave">—</span>}<div className="text-[11px] text-suave">{m.prazo ? dataBR(m.prazo) : ""}</div></td>
                     <td className="text-xs">{m.condutor_indicado ? <b>{m.condutor_indicado}</b> : <span className="text-suave">não indicado</span>}{m.condutores_placa && <div className="text-suave">dirigem: {m.condutores_placa}</div>}</td>
                     <td className="num text-right font-semibold">{brl(Number(m.valor))}</td>
+                    <td className="num text-right">{c20 !== null ? brl(c20) : <span className="text-suave">—</span>}</td>
+                    <td className="num text-right">{c40 !== null ? <b className="text-rec">{brl(c40)}</b> : <span className="text-xs text-suave" title={selos.find((x) => x.faixa === "20")?.texto.replace(/^20%: [^.]*\. /, "") ?? selos[0]?.texto}>Inelegível</span>}</td>
                     <td className="text-right"><form action={entrarCliente}><input type="hidden" name="clienteId" value={m.cliente_id} /><input type="hidden" name="destino" value={`/multas/${m.id}`} /><button className="link text-sm">Abrir</button></form></td>
                   </tr>
                 ))}
+                {grupos.length > 1 && <LinhaTotal rotulo="Subtotal" ls={g.linhas} />}
+                </Fragment>))}
+                <LinhaTotal rotulo={grupos.length > 1 ? "Total geral" : `Total ${grupos[0]?.cliente ?? ""}`} ls={comValores} forte />
               </tbody>
             </table>
           </div>
         )}
+        {d.multas.length > 0 && <p className="mt-3 text-xs text-suave">Com 20%: pagando até o vencimento (quem já venceu entra pelo valor cheio no total). Com 40%: só multas com SNE (proprietário no SNE antes da infração e órgão aderente), pagando sem recorrer; no total, as demais entram com 20% ou valor cheio.</p>}
       </Card>
     </>
   );
