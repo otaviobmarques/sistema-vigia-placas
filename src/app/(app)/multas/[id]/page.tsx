@@ -12,6 +12,9 @@ import { Aviso, Card, ChipEstado, ChipPrazo, Mensagem } from "@/components/ui";
 import { Placa, Vigi } from "@/components/marca";
 import { adicionarCarrinho, indicar, pedirDefesaAction, protocolar, reconhecerSne } from "../../../actions";
 import { precosDoCliente } from "@/lib/services/precos";
+import { LogoOrgao, logoDoOrgao } from "@/components/logo-orgao";
+import { SeloDesconto } from "@/components/selo-desconto";
+import { seloDesconto } from "@/lib/domain/ctb";
 
 export default async function DetalheMulta({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ ok?: string; erro?: string }> }) {
   const s = await exigirCliente();
@@ -49,12 +52,13 @@ export default async function DetalheMulta({ params, searchParams }: { params: P
       <div className="mb-6 flex flex-wrap items-center gap-4">
         <Placa placa={m.placa} tamanho="lg" />
         <div className="min-w-0 flex-1">
+          {logoDoOrgao(m.orgao_id) && <div className="mb-1"><LogoOrgao id={m.orgao_id} nome={m.orgao_nome} tamanho="md" /></div>}
           <h1 className="text-2xl font-extrabold">{m.descricao}</h1>
           <p className="text-sm text-suave">
-            {GRAVIDADES[m.gravidade].rotulo} · {m.pontos} pontos · {m.orgao_nome} · {m.local} · {dataBR(m.data_infracao)}{m.hora ? `, ${m.hora}` : ""}
+            {GRAVIDADES[m.gravidade].rotulo} · {m.pontos} pontos · <LogoOrgao id={m.orgao_id} nome={m.orgao_nome} /> · {m.local} · {dataBR(m.data_infracao)}{m.hora ? `, ${m.hora}` : ""}
           </p>
         </div>
-        <div className="flex items-center gap-2"><ChipEstado estado={m.estado} />{aberta && prazoPrincipal && <ChipPrazo prefixo="Prazo: " dias={diasEntre(hoje, prazoPrincipal)} />}</div>
+        <div className="flex items-center gap-2"><SeloDesconto {...seloDesconto(r, hoje)} /><ChipEstado estado={m.estado} />{aberta && prazoPrincipal && <ChipPrazo prefixo="Prazo: " dias={diasEntre(hoje, prazoPrincipal)} />}</div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[1.6fr_1fr]">
@@ -83,7 +87,7 @@ export default async function DetalheMulta({ params, searchParams }: { params: P
                 {v.com40 !== null ? (
                   <><div className="num text-xl font-extrabold">{brl(v.com40)}</div><div className="text-xs text-economia">Economia de {brl(v.cheio - v.com40)} (40%)</div></>
                 ) : (
-                  <div className="mt-1 text-xs text-suave">{!m.sne_adesao_em ? "Placa não aderida ao SNE." : !m.aderente_sne ? "Órgão não aderente ao SNE." : "Adesão ao SNE foi depois da infração."}</div>
+                  <div className="mt-1 text-xs text-suave">{!m.sne_adesao_em ? "Cliente/placa sem registro no SNE." : !m.aderente_sne ? "Órgão não aderente ao SNE." : "Adesão ao SNE foi depois da infração."}</div>
                 )}
               </div>
             </div>
@@ -196,7 +200,7 @@ export default async function DetalheMulta({ params, searchParams }: { params: P
           </Card>
           <Card titulo="Elegibilidade">
             <ul className="space-y-1 text-sm">
-              <li>{m.sne_adesao_em ? "✓" : "✗"} Placa no SNE {m.sne_adesao_em ? `desde ${dataBR(m.sne_adesao_em)}` : ""}</li>
+              <li>{m.sne_adesao_em ? "✓" : "✗"} Proprietário no SNE {m.sne_adesao_em && m.sne_adesao_em > "1900-01-01" ? `desde ${dataBR(m.sne_adesao_em)}` : ""}</li>
               <li>{m.aderente_sne ? "✓" : "✗"} Órgão aderente ao SNE</li>
               <li>{elegivel40(r) ? "✓ Elegível a 40%" : "✗ Não elegível a 40%"}</li>
               {m.tipo_proprietario === "PJ" && <li>Pessoa jurídica: indicação evita NIC de {brl(v.nic)}</li>}

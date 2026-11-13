@@ -40,8 +40,11 @@ export interface MultaRow {
   no_carrinho: boolean;
 }
 
+/** Adesão ao SNE que vale para a multa: a da placa ou a do cliente (proprietário); cliente sem data = desde sempre. */
+export const SQL_SNE = "least(p.sne_adesao_em, case when c.sne_cadastrado then coalesce(c.sne_desde, date '1900-01-01') end)";
+
 export const SELECT_MULTA = `
-  select m.*, p.placa, p.apelido, p.centro_custo, p.sne_adesao_em, c.tipo as tipo_proprietario, c.nome as cliente_nome,
+  select m.*, p.placa, p.apelido, p.centro_custo, ${SQL_SNE} as sne_adesao_em, c.tipo as tipo_proprietario, c.nome as cliente_nome,
          o.nome as orgao_nome, o.aderente_sne, cd.nome as condutor_nome,
          exists (select 1 from carrinho_itens ci where ci.multa_id = m.id) as no_carrinho
   from multas m

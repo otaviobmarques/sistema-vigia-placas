@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { erroDeConta, FONTES, fontesParaUf, interpretarResposta, montarParametros, reaisParaCentavos, dataParaISO } from "./infosimples";
+import { erroDeConta, FONTES, fontesParaUf, infosimplesCobreUf, interpretarResposta, montarParametros, reaisParaCentavos, dataParaISO } from "./infosimples";
 
 const fonte = (s: string) => FONTES.find((f) => f.servico === s)!;
 
 describe("Infosimples · roteamento", () => {
   it("toda placa consulta a PRF e a fonte do seu estado", () => {
-    expect(fontesParaUf("MG").map((f) => f.servico)).toEqual(["prf/infracoes", "detran/mg/multas-extrato"]);
-    expect(fontesParaUf("sp").map((f) => f.servico)).toEqual(["prf/infracoes"]);
+    expect(fontesParaUf("MG").map((f) => f.servico)).toEqual(["prf/infracoes", "dnit/infracoes", "detran/mg/multas-extrato"]);
+    expect(fontesParaUf("sp").map((f) => f.servico)).toEqual(["prf/infracoes", "dnit/infracoes"]);
   });
   it("Detran-RJ usa o CPF/CNPJ do dono", () => {
     expect(montarParametros(fonte("detran/rj/multas-guias"), { placa: "ABC1D23", renavam: "01234567897", documento: "11222333000181" })).toEqual({ renavam: "01234567897", cnpj: "11222333000181" });
@@ -66,5 +66,45 @@ describe("Infosimples · erros de conta", () => {
     expect(r.ok).toBe(false);
     expect(erroDeConta(r)).toBe(true);
     expect(erroDeConta({ codigo: 606, erro: "606 Parâmetros inválidos" })).toBe(false);
+  });
+});
+
+describe("DNIT", () => {
+  const dnit = FONTES.find((f) => f.servico === "dnit/infracoes")!;
+  it("vale para todas as UFs e não faz a UF parecer coberta por Detran", () => {
+    expect(fontesParaUf("SP").some((f) => f.servico === "dnit/infracoes")).toBe(true);
+    expect(infosimplesCobreUf("SP")).toBe(false);
+    expect(infosimplesCobreUf("MG")).toBe(true);
+  });
+  it("lê a resposta do DNIT (ait, datahora, enquadramento, boleto) e ignora quitada e cancelada", () => {
+    const r = interpretarResposta(dnit, {
+      code: 200, header: { price: "0.24" },
+      data: [{
+        ait: "S001234567", datahora: "10/10/2026 14:32", codigo_enquadramento: "683-1", descricao: "Transitar com excesso de peso",
+        gravidade: "Média", normalizado_valor: 195.23, local: "BR-381 km 450", municipio: "Betim/MG", situacao: "Aguardando pagamento",
+        boleto_vencimento: "30/11/2026", boleto_codigo_barras: "8586.0000 1952", debito_quitado: "Não",
+      }, { ait: "S009", datahora: "01/09/2026 08:00", normalizado_valor: 100, debito_quitado: "Sim" },
+         { ait: "S010", datahora: "01/09/2026 08:00", normalizado_valor: 100, causa_cancelamento: "Recurso deferido" }],
+    });
+    expect(r.ok).toBe(true);
+    expect(r.custo).toBe(24);
+    expect(r.multas).toHaveLength(1);
+    expect(r.multas[0]).toMatchObject({
+      orgaoId: "DNIT", autoInfracao: "S001234567", codigoInfracao: "6831", valor: 19523, gravidade: "media", dataInfracao: "2026-10-10", hora: "14:32",
+      local: "BR-381 km 450 · Betim/MG", vencimento: "2026-11-30", linhaDigitavel: "858600001952",
+    });
+  });
+});
+
+describe("situação da multa", () => {
+  const prf = FONTES.find((f) => f.servico === "prf/infracoes")!;
+  const m = (situacao: string) => interpretarResposta(prf, { code: 200, data: [{ ait: "A1", data_infracao: "01/10/2026", valor: "195,23", situacao }] }).multas.length;
+  it("'Aguardando pagamento' e 'Não paga' continuam em aberto", () => {
+    expect(m("Aguardando pagamento")).toBe(1);
+    expect(m("Não paga")).toBe(1);
+    expect(m("A pagar")).toBe(1);
+  });
+  it("paga, quitada, cancelada e arquivada saem", () => {
+    for (const s of ["Paga", "Quitada", "Cancelada", "Arquivado", "Baixada"]) expect(m(s)).toBe(0);
   });
 });

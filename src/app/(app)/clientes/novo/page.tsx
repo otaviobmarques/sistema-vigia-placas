@@ -38,6 +38,11 @@ export default async function NovoCliente({ searchParams }: { searchParams: Prom
             </div>
             <p className="text-xs text-suave sm:col-span-2">Use para empresas com vários CNPJs: os relatórios podem somar todos os clientes do grupo.</p>
           </div>
+          <div className="mt-4"><div className="rounded-xl border border-borda p-3">
+              <label className="flex items-center gap-2 text-sm font-semibold"><input type="checkbox" name="sne_cadastrado"  className="h-4 w-4 accent-vigia" /> Registrado no SNE</label>
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-suave"><span>Desde</span><input type="date" name="sne_desde"  className="campo w-40 py-1" /><span>(em branco = vale para todas as multas)</span></div>
+              <p className="mt-1 text-[11px] text-suave">Proprietário com adesão ao Sistema de Notificação Eletrônica: as multas de órgãos aderentes têm direito a 40% de desconto.</p>
+            </div></div>
         </Card>
         <Card titulo="2. Plano e cobrança">
           <div className="grid gap-3 sm:grid-cols-3">
