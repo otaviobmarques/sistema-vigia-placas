@@ -15,7 +15,7 @@ import { regra, SELECT_MULTA, SQL_SNE, type MultaRow } from "./multas";
 export type TipoColuna = "texto" | "num" | "brl" | "data";
 export interface Coluna { chave: string; rotulo: string; tipo: TipoColuna }
 export interface Tabela { titulo: string; descricao: string; colunas: Coluna[]; linhas: Record<string, string | number | null>[] }
-export interface Filtros { periodo?: Periodo | null; cliente?: string | null; grupo?: string | null; placa?: string | null; condutor?: string | null; mes?: string | null; novas?: boolean }
+export interface Filtros { ver?: string | null; periodo?: Periodo | null; cliente?: string | null; grupo?: string | null; placa?: string | null; condutor?: string | null; mes?: string | null; novas?: boolean }
 
 export const RELATORIOS = {
   faturamento: "Faturamento por cliente",
@@ -62,7 +62,7 @@ function porCliente(f: Filtros, params: unknown[], col: string): string {
 }
 
 /** Colunas que entram na linha de total (tela e Excel): valores e quantidades, menos posição, médias e dias. */
-export const somavel = (col: Coluna) => (col.tipo === "brl" || col.tipo === "num") && !/^(posicao|medio|dias)$/.test(col.chave);
+export const somavel = (col: Coluna) => (col.tipo === "brl" || col.tipo === "num") && !/^(posicao|medio|dias|unitario)$/.test(col.chave);
 
 const SQL_GRUPO = "(select g.nome from grupos_economicos g where g.id = c.grupo_id)";
 
@@ -137,6 +137,18 @@ export async function rankingCondutores(db: Db, f: Filtros, limite = 10) {
 export const SQL_PROVEDOR = `case when q.fonte_id = 'directdata' then 'Direct Data' when q.fonte_id like 'infosimples%' then 'Infosimples' else coalesce(f.nome, q.fonte_id) end`;
 
 /** Consultas e custo por API (Direct Data, Infosimples) no mês, para conferir com a fatura de cada fornecedor. */
+/** Consultas e custo de cada API (base) no mês, para o detalhe dos cards do Dashboard. */
+export async function consultasPorBase(db: Db, mes: string) {
+  return db.q<{ provedor: string; servico: string; consultas: number; erros: number; custo: number }>(
+    `select ${SQL_PROVEDOR} as provedor, coalesce(f.nome, q.fonte_id) as servico, count(*)::int as consultas,
+            count(*) filter (where q.resultado <> 'ok')::int as erros, coalesce(sum(q.custo),0)::int as custo
+       from consultas q left join fontes f on f.id = q.fonte_id
+      where to_char(q.data at time zone 'America/Sao_Paulo','YYYY-MM') = $1 and q.fonte_id is not null
+      group by 1, 2 order by custo desc, consultas desc`,
+    [mes],
+  );
+}
+
 export async function consultasPorApi(db: Db, mes: string, cliente?: string | null) {
   return db.q<{ provedor: string; consultas: number; ok: number; erros: number; custo: number; placas: number }>(
     `select ${SQL_PROVEDOR} as provedor, count(*)::int as consultas, count(*) filter (where q.resultado = 'ok')::int as ok,
@@ -169,20 +181,40 @@ export async function gerarRelatorioGestao(db: Db, tipo: TipoRelatorio, f: Filtr
   }
 
   if (tipo === "consultas-api") {
+    const ver = f.ver === "cliente" || f.ver === "dia" ? f.ver : "api";
     const pa: unknown[] = [];
     const filtroApi = porCliente(f, pa, "q.cliente_id") + noPeriodo(f, pa, "(q.data at time zone 'America/Sao_Paulo')::date");
-    const linhas = await db.q(
-      `select ${SQL_PROVEDOR} as provedor, coalesce(f.nome, q.fonte_id) as servico, cl.nome as cliente, (select g.nome from grupos_economicos g where g.id = cl.grupo_id) as grupo,
+    const extra = ver === "cliente" ? ", cl.nome as cliente, (select g.nome from grupos_economicos g where g.id = cl.grupo_id) as grupo"
+      : ver === "dia" ? ", to_char((q.data at time zone 'America/Sao_Paulo')::date, 'YYYY-MM-DD') as dia" : "";
+    const grupo = ver === "cliente" ? "1, 2, 3, 4" : ver === "dia" ? "1, 2, 3" : "1, 2";
+    const linhas = await db.q<any>(
+      `select ${SQL_PROVEDOR} as provedor, coalesce(f.nome, q.fonte_id) as servico${extra},
               count(*)::int as consultas, count(*) filter (where q.resultado = 'ok')::int as ok, count(*) filter (where q.resultado <> 'ok')::int as erros,
-              coalesce(sum(q.custo),0)::int as custo, round(coalesce(avg(q.custo),0))::int as medio
+              count(*) filter (where q.custo > 0)::int as cobradas, coalesce(sum(q.custo),0)::int as custo
          from consultas q left join fontes f on f.id = q.fonte_id join clientes cl on cl.id = q.cliente_id
         where q.fonte_id is not null${filtroApi}
-        group by 1, 2, 3, 4 order by 1, custo desc`,
+        group by ${grupo} order by ${ver === "dia" ? "3 desc, " : ""}1, custo desc`,
       pa,
     );
-    const colunas = [c("provedor", "API"), c("servico", "Base"), c("cliente", "Cliente"), c("grupo", "Grupo econômico"), c("consultas", "Consultas", "num"), c("ok", "Com sucesso", "num"), c("erros", "Com erro", "num"),
-      c("custo", "Custo", "brl"), c("medio", "Custo médio", "brl")];
-    return { titulo, descricao: `${textoPeriodo(f.periodo ?? null)}: quantas consultas foram feitas em cada API (Direct Data e Infosimples) e quanto custaram, por base e por cliente. Consultas com erro normalmente não são cobradas pela fonte.`, linhas: linhas, colunas };
+    // Preço unitário real: custo dividido pelas consultas cobradas.
+    const comPreco = linhas.map((l: any) => ({ ...l, unitario: l.cobradas ? Math.round(l.custo / l.cobradas) : 0 }));
+    // Subtotal por fornecedor (Direct Data / Infosimples) na visão por API.
+    const saida: Record<string, any>[] = [];
+    if (ver === "api") {
+      for (const prov of [...new Set(comPreco.map((l: any) => l.provedor))]) {
+        const ls = comPreco.filter((l: any) => l.provedor === prov);
+        saida.push(...ls);
+        if (ls.length > 1) saida.push({ provedor: `Subtotal ${prov}`, servico: `${ls.length} APIs`, consultas: ls.reduce((a: number, l: any) => a + l.consultas, 0), ok: ls.reduce((a: number, l: any) => a + l.ok, 0), erros: ls.reduce((a: number, l: any) => a + l.erros, 0), cobradas: ls.reduce((a: number, l: any) => a + l.cobradas, 0), custo: ls.reduce((a: number, l: any) => a + l.custo, 0), unitario: null, subtotal: true });
+      }
+    } else saida.push(...comPreco);
+    const base = [c("provedor", "Fornecedor"), c("servico", "API / base consultada")];
+    const meio = ver === "cliente" ? [c("cliente", "Cliente"), c("grupo", "Grupo econômico")] : ver === "dia" ? [c("dia", "Dia", "data")] : [];
+    const colunas = [...base, ...meio, c("consultas", "Consultas", "num"), c("ok", "Com sucesso", "num"), c("erros", "Com erro", "num"), c("cobradas", "Cobradas", "num"), c("unitario", "Preço por consulta", "brl"), c("custo", "Custo", "brl")];
+    return {
+      titulo,
+      descricao: `${textoPeriodo(f.periodo ?? null)}: consultas feitas em cada API e o custo real. Infosimples: valor informado pela própria API em cada consulta (erros não são cobrados). Direct Data: preço por consulta com sucesso, conforme a tabela cadastrada no Backoffice › Fontes.`,
+      linhas: saida, colunas,
+    };
   }
 
   if (tipo === "multas-pagar" || tipo === "valores-multas") {
@@ -365,7 +397,7 @@ export function tabelaXlsx(t: Tabela): Buffer {
   };
   const aoa = [[`Vigia Placa · ${t.titulo}`], [t.descricao], [], t.colunas.map((c) => (c.tipo === "brl" ? `${c.rotulo} (R$)` : c.rotulo)), ...t.linhas.map((l) => t.colunas.map((c) => fmt(c, l[c.chave]))),
     ...(t.linhas.length > 1 && t.colunas.some(somavel)
-      ? [t.colunas.map((c, i) => (i === 0 ? `Total (${t.linhas.length})` : somavel(c) ? fmt(c, t.linhas.reduce((a, l) => a + Number(l[c.chave] ?? 0), 0)) : ""))]
+      ? [t.colunas.map((c, i) => { const ls = t.linhas.filter((l) => !(l as any).subtotal); return i === 0 ? `Total (${ls.length})` : somavel(c) ? fmt(c, ls.reduce((a, l) => a + Number(l[c.chave] ?? 0), 0)) : ""; })]
       : [])];
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   ws["!cols"] = t.colunas.map((c) => ({ wch: c.tipo === "texto" ? 26 : 14 }));

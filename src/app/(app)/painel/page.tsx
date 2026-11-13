@@ -6,7 +6,7 @@ import { rotuloPerfil } from "@/lib/acesso";
 import { Cabecalho, Card, Numero, Vazio } from "@/components/ui";
 import { GraficoBarras } from "@/components/grafico-barras";
 import { Notificacoes } from "@/components/notificacoes";
-import { consultasPorApi, rankingCondutores } from "@/lib/services/relatorios-gestao";
+import { consultasPorApi, consultasPorBase, rankingCondutores } from "@/lib/services/relatorios-gestao";
 
 export const metadata = { title: "Dashboard" };
 
@@ -67,11 +67,7 @@ export default async function Painel({ searchParams }: { searchParams: Promise<{
     ),
     ranking: await rankingCondutores(db, {}, 5),
     apis: await consultasPorApi(db, mes),
-    fontes: await db.q(
-      `select f.nome, count(q.id) as consultas, count(*) filter (where q.resultado = 'erro') as erros, coalesce(sum(q.custo),0) as custo
-       from consultas q join fontes f on f.id = q.fonte_id where to_char(q.data,'YYYY-MM') = $1 group by f.nome order by custo desc`,
-      [mes],
-    ),
+    bases: await consultasPorBase(db, mes),
   }));
   const t = d.t;
   type Linha = Record<string, any> & { mensalidade: number; saving: number; total: number; margem: number };
@@ -109,8 +105,8 @@ export default async function Painel({ searchParams }: { searchParams: Promise<{
       </div>
 
       <div className="mb-2 flex items-baseline justify-between gap-2">
-        <p className="sobretitulo">Consultas por API no mês</p>
-        <Link href="/gestao/relatorios?tipo=consultas-api" className="link text-xs">Ver por base e por cliente</Link>
+        <p className="sobretitulo">Consultas por API no mês <span className="normal-case tracking-normal text-suave">· {brl(d.apis.reduce((a, x) => a + Number(x.custo), 0))} no total</span></p>
+        <Link href="/gestao/relatorios?tipo=consultas-api" className="link text-xs">Relatório completo (por API, cliente ou dia)</Link>
       </div>
       <div className="mb-6 grid gap-3 sm:grid-cols-2">
         {([["Direct Data", "/fontes/directdata.png"], ["Infosimples", "/fontes/infosimples.png"]] as const).map(([nome, logo]) => {
@@ -128,6 +124,20 @@ export default async function Painel({ searchParams }: { searchParams: Promise<{
                 <div><b className={`num block text-lg ${a.erros ? "text-rec" : "text-vigia"}`}>{a.erros}</b>com erro</div>
                 <div><b className="num block text-lg text-vigia">{brl(a.consultas ? Math.round(a.custo / a.consultas) : 0)}</b>custo médio</div>
               </div>
+              {(() => {
+                const bases = d.bases.filter((b) => b.provedor === nome);
+                if (!bases.length) return <p className="mt-3 border-t border-borda pt-2 text-xs text-suave">Nenhuma consulta neste mês.</p>;
+                return (
+                  <ul className="mt-3 space-y-1 border-t border-borda pt-2 text-xs">
+                    {bases.map((b) => (
+                      <li key={b.servico} className="flex items-baseline justify-between gap-2">
+                        <span className="min-w-0 truncate">{b.servico}</span>
+                        <span className="shrink-0 text-suave"><b className="num text-vigia">{b.consultas}</b> consulta{b.consultas > 1 ? "s" : ""}{b.erros ? <span className="text-rec"> · {b.erros} erro{b.erros > 1 ? "s" : ""}</span> : null} · <b className="num text-vigia">{brl(Number(b.custo))}</b></span>
+                      </li>
+                    ))}
+                  </ul>
+                );
+              })()}
             </div>
           );
         })}
@@ -190,16 +200,6 @@ export default async function Painel({ searchParams }: { searchParams: Promise<{
         )}
       </Card>
 
-      <Card titulo="Custo por fonte de dados no mês">
-        {d.fontes.length === 0 ? <Vazio>Nenhuma consulta neste mês.</Vazio> : (
-          <div className="-mx-5 overflow-x-auto"><table className="tabela min-w-[520px]">
-            <thead><tr><th>Fonte</th><th className="!text-right">Consultas</th><th className="!text-right">Com erro</th><th className="!text-right">Custo</th><th className="!text-right">Custo médio</th></tr></thead>
-            <tbody>{d.fontes.map((f) => (
-              <tr key={f.nome}><td>{f.nome}</td><td className="num text-right">{f.consultas}</td><td className="num text-right">{f.erros}</td><td className="num text-right font-semibold">{brl(Number(f.custo))}</td><td className="num text-right text-suave">{brl(Number(f.consultas) ? Math.round(Number(f.custo) / Number(f.consultas)) : 0)}</td></tr>
-            ))}</tbody>
-          </table></div>
-        )}
-      </Card>
     </>
   );
 }

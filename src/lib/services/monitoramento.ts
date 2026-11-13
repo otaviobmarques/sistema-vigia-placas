@@ -120,7 +120,10 @@ export async function consultarPlaca(db: Db, placaId: string, opts: { avulsa?: b
     // Cada multa guarda de qual fonte veio (a primeira que a trouxe).
     multas: detalhes.flatMap((d) => d.multas.map((m) => ({ ...m, fonteNome: nomeFonte(d.servico) }))),
   };
+  // Direct Data não informa o valor cobrado: usa o preço da tabela cadastrada no Backoffice › Fontes (só consulta com sucesso).
+  const precoDD = Number((await db.one<{ custo: number }>("select custo from fontes where id = 'directdata'"))?.custo ?? 36);
   for (const d of detalhes) {
+    if (d.servico === SERVICO_DIRECTDATA && d.custo > 0) d.custo = precoDD;
     const fid = d.servico === "simulado" ? "infosimples" : d.servico === SERVICO_DIRECTDATA ? "directdata" : `infosimples:${d.servico}`;
     const info = FONTES.find((x) => x.servico === d.servico);
     if (fid !== "infosimples") {

@@ -14,14 +14,14 @@ export function TabelaRelatorio({ t }: { t: Tabela }) {
         <thead><tr>{t.colunas.map((c) => <th key={c.chave} className={c.tipo === "brl" || c.tipo === "num" ? "!text-right" : ""}>{c.rotulo}</th>)}</tr></thead>
         <tbody>
           {t.linhas.map((l, i) => (
-            <tr key={i}>{t.colunas.map((c, j) => (
+            <tr key={i} className={(l as any).subtotal ? "bg-nevoa/70 font-semibold" : ""}>{t.colunas.map((c, j) => (
               <td key={c.chave} className={`${c.tipo === "brl" || c.tipo === "num" ? "num text-right" : "text-sm"} ${j === 0 ? "font-semibold" : ""} ${c.chave === "pode" && String(l[c.chave]).startsWith("Não") ? "font-semibold text-rec" : ""} ${c.chave === "dias" && Number(l[c.chave]) < 0 ? "font-bold text-rec" : ""}`}>{fmt(c.tipo, l[c.chave])}</td>
             ))}</tr>
           ))}
         </tbody>
         {somaveis.length > 0 && t.linhas.length > 1 && (
           <tfoot><tr className="font-bold">{t.colunas.map((c, j) => (
-            <td key={c.chave} className={c.tipo === "brl" || c.tipo === "num" ? "num text-right" : ""}>{j === 0 ? `Total (${t.linhas.length})` : somaveis.includes(c) ? fmt(c.tipo, t.linhas.reduce((a, l) => a + Number(l[c.chave] ?? 0), 0)) : ""}</td>
+            <td key={c.chave} className={c.tipo === "brl" || c.tipo === "num" ? "num text-right" : ""}>{j === 0 ? `Total (${t.linhas.filter((l) => !(l as any).subtotal).length})` : somaveis.includes(c) ? fmt(c.tipo, t.linhas.filter((l) => !(l as any).subtotal).reduce((a, l) => a + Number(l[c.chave] ?? 0), 0)) : ""}</td>
           ))}</tr></tfoot>
         )}
       </table>

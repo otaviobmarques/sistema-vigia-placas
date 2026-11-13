@@ -13,7 +13,7 @@ export async function GET(req: Request) {
   if (!ehRelatorio(tipo)) return NextResponse.json({ erro: "relatório inválido" }, { status: 400 });
   const cfgP = PERIODO_DO_RELATORIO[tipo];
   const periodo = cfgP ? lerPeriodo(q, cfgP.padrao, hojeISO(), cfgP.aceitaTudo).periodo : null;
-  const t = await noEscopo(s, (db) => gerarRelatorioGestao(db, tipo, { periodo, cliente: q.get("cliente"), grupo: q.get("cliente") ? null : q.get("grupo"), placa: q.get("placa"), condutor: q.get("condutor"), mes: q.get("mes"), novas: q.get("novas") === "1" }));
+  const t = await noEscopo(s, (db) => gerarRelatorioGestao(db, tipo, { ver: q.get("ver"), periodo, cliente: q.get("cliente"), grupo: q.get("cliente") ? null : q.get("grupo"), placa: q.get("placa"), condutor: q.get("condutor"), mes: q.get("mes"), novas: q.get("novas") === "1" }));
   const arquivo = `vigia_${tipo}_${hojeISO()}.xlsx`;
   return new Response(new Uint8Array(tabelaXlsx(t)), {
     headers: {
