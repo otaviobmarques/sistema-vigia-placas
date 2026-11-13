@@ -17,6 +17,7 @@ import { LogoOrgao } from "@/components/logo-orgao";
 import { TabelaMultasAntt } from "@/components/multas-antt";
 import { multasAntt } from "@/lib/services/antt";
 import { consultarAnttJa, salvarAcessoAntt } from "../../../actions";
+import { listarProcuradores } from "@/lib/services/acesso-gov";
 
 export const metadata = { title: "Multas ANTT" };
 
@@ -25,6 +26,7 @@ const quando = (d: string | null) => (d ? new Date(d).toLocaleString("pt-BR", { 
 export default async function MultasAnttEquipe({ searchParams }: { searchParams: Promise<{ cliente?: string; grupo?: string; todas?: string; editar?: string; ok?: string; erro?: string }> }) {
   const s = await exigirSessao(["franqueadora", "franqueado"]);
   const sp = await searchParams;
+  const procuradores = await listarProcuradores();
   const d = await noEscopo(s, async (db) => ({
     multas: await multasAntt(db, { cliente: sp.cliente || null, grupo: sp.cliente ? null : sp.grupo || null, todas: sp.todas === "1" }),
     clientes: await db.q<{ id: string; nome: string; documento: string; antt_ativo: boolean; antt_login: string | null; antt_cnpj_representado: string | null; tem_senha_antt: boolean; antt_ultima_consulta: string | null; antt_ultimo_erro: string | null; antt_resumo: any;
@@ -89,7 +91,7 @@ export default async function MultasAnttEquipe({ searchParams }: { searchParams:
             {editar ? <input type="hidden" name="clienteId" value={editar.id} /> : (
               <div><label className="rotulo">Cliente</label><select name="clienteId" required defaultValue="" className="campo"><option value="" disabled>Escolha…</option>{d.clientes.filter((c) => !c.antt_ativo).map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}</select></div>
             )}
-            <CamposAntt c={editar ?? { antt_ativo: true }} compacto />
+            <CamposAntt c={editar ?? { antt_ativo: true }} compacto procuradores={procuradores} />
             <BotaoEnviar className="btn-primario w-full" enviando="Salvando…">Salvar e consultar</BotaoEnviar>
             {editar && <Link href="?" className="block text-center text-xs text-suave underline">Cancelar</Link>}
           </form>

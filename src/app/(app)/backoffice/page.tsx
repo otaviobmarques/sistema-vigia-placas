@@ -33,6 +33,11 @@ export default async function Backoffice({ searchParams }: { searchParams: Promi
       (select coalesce(sum(preco),0) from pedidos_defesa where to_char(criado_em,'YYYY-MM') = $1) as defesa,
       (select coalesce(sum(coalesce(c.preco_placa_personalizado, pl.preco_placa)),0) from placas p join clientes c on c.id = p.cliente_id join planos pl on pl.id = c.plano_id where p.status <> 'pausada') as mensalidades`, [mes]),
     cfg: await db.one("select * from configuracao"),
+    procuradores: await db.q<{ id: string; nome: string; gov_cpf: string; tem_senha: boolean; clientes: number }>(
+      `select u.id, u.nome, u.gov_cpf, (u.gov_senha_cifrada is not null) as tem_senha,
+              (select count(*)::int from clientes c where c.procuracao_gov and c.procurador_usuario_id = u.id and c.excluido_em is null) as clientes
+         from usuarios u where u.nivel = 'franqueadora' and u.gov_cpf is not null order by u.nome`,
+    ),
     procurador: await db.one<{ cpf: string | null; temSenha: boolean; clientes: number }>(
       `select procurador_cpf as cpf, (procurador_senha_cifrada is not null) as "temSenha",
               (select count(*)::int from clientes where procuracao_gov and excluido_em is null) as clientes from configuracao where id = 1`,
@@ -221,15 +226,20 @@ export default async function Backoffice({ searchParams }: { searchParams: Promi
 
       {aba === "fontes" && (
         <>
-        <Card titulo="Procurador gov.br da Vigia Placa" className="mb-6">
+        <Card titulo="Procuradores gov.br" className="mb-6">
+          <p className="mb-2 text-sm text-suave">Cada procurador (ex.: o Gestor) cadastra o próprio gov.br em <b>Minha conta</b>; no cliente você escolhe para quem é a procuração.</p>
+          {d.procuradores.length ? (
+            <ul className="mb-4 divide-y divide-borda rounded-xl border border-borda text-sm">
+              {d.procuradores.map((p) => <li key={p.id} className="flex justify-between px-3 py-2"><span><b>{p.nome}</b> · CPF {p.gov_cpf}{p.tem_senha ? "" : " · falta a senha"}</span><span className="text-suave">{p.clientes} cliente(s)</span></li>)}
+            </ul>
+          ) : <p className="mb-4 text-sm font-semibold text-ambar">Nenhum procurador cadastrou o gov.br em Minha conta ainda.</p>}
           <p className="mb-3 text-sm text-suave">
-            Clientes que deram procuração no gov.br são consultados com este acesso (SNE/SENATRAN e SIFAMA), escolhendo o CNPJ do cliente.
-            É usado antes do login gov.br do próprio cliente. {d.procurador.cpf ? <b className="text-tinta">Configurado: CPF {d.procurador.cpf}{d.procurador.temSenha ? "" : " (falta a senha)"} · {d.procurador.clientes} cliente(s) com procuração.</b> : <b className="text-ambar">Ainda não configurado.</b>}
+            <b>Procurador padrão</b> (opcional): usado quando o cliente tem procuração mas não escolheu o procurador. {d.procurador.cpf ? <b className="text-tinta">Configurado: CPF {d.procurador.cpf}{d.procurador.temSenha ? "" : " (falta a senha)"} · {d.procurador.clientes} cliente(s) com procuração.</b> : <b className="text-ambar">Ainda não configurado.</b>}
           </p>
           <form action={salvarProcurador} className="flex flex-wrap items-end gap-2">
             <div><label className="rotulo">CPF do procurador</label><input name="procurador_cpf" defaultValue={d.procurador.cpf ?? ""} inputMode="numeric" autoComplete="off" className="campo w-48" /></div>
             <div><label className="rotulo">Senha gov.br</label><input name="procurador_senha" type="password" autoComplete="new-password" placeholder={d.procurador.temSenha ? "•••••• (guardada; digite para trocar)" : ""} className="campo w-64" /></div>
-            <button className="btn-primario">Salvar procurador</button>
+            <button className="btn-primario">Salvar procurador padrão</button>
           </form>
           <p className="mt-2 text-[11px] text-suave">🔒 Senha guardada criptografada. Use uma conta gov.br nível prata ou ouro; verificação em duas etapas pode bloquear a consulta automática.</p>
         </Card>
