@@ -9,12 +9,14 @@ import { ehAdminSistema, franquiasAtivas } from "@/lib/acesso";
 import { CICLOS } from "@/lib/domain/ciclo";
 import { CamposPrecosCliente } from "@/components/precos-cliente";
 import { CamposAntt } from "@/components/campos-antt";
+import { listarProcuradores } from "@/lib/services/acesso-gov";
 
 export const metadata = { title: "Novo cliente" };
 
 export default async function NovoCliente({ searchParams }: { searchParams: Promise<{ erro?: string }> }) {
   const s = await exigirSessao(["franqueado", "franqueadora"]);
   const sp = await searchParams;
+  const procuradores = await listarProcuradores();
   const d = await noEscopo(s, async (db) => ({
     planos: await db.q("select * from planos order by preco_placa nulls last"),
     franqueados: s.nivel === "franqueadora" ? await db.q("select id, nome from franqueados where ativo order by nome") : [],
@@ -39,7 +41,7 @@ export default async function NovoCliente({ searchParams }: { searchParams: Prom
             </div>
             <p className="text-xs text-suave sm:col-span-2">Use para empresas com vários CNPJs: os relatórios podem somar todos os clientes do grupo.</p>
           </div>
-          <div className="mt-4"><CamposAntt /></div>
+          <div className="mt-4"><CamposAntt procuradores={procuradores} /></div>
           <div className="mt-4"><div className="rounded-xl border border-borda p-3">
               <label className="flex items-center gap-2 text-sm font-semibold"><input type="checkbox" name="sne_cadastrado"  className="h-4 w-4 accent-vigia" /> Registrado no SNE</label>
               <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-suave"><span>Desde</span><input type="date" name="sne_desde"  className="campo w-40 py-1" /><span>(em branco = vale para todas as multas)</span></div>

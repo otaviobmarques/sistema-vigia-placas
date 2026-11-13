@@ -1,11 +1,12 @@
 /** Bloco "ANTT / SIFAMA" do cadastro do cliente. A senha nunca volta para a tela: em branco mantém a guardada. */
 type AcessoGovTela = {
   procuracao_gov?: boolean | null; procuracao_validade?: string | null; gov_login?: string | null; tem_senha_gov?: boolean | null;
-  gov_multas_ativo?: boolean | null; gov_ultimo_erro?: string | null; doc_procuracao?: string | null;
+  gov_multas_ativo?: boolean | null; gov_ultimo_erro?: string | null; doc_procuracao?: string | null; procurador_usuario_id?: string | null;
 };
+type ProcuradorOpcao = { id: string; nome: string; gov_cpf: string; tem_senha: boolean };
 
 /** Bloco "Acesso gov.br" do cadastro do cliente: procuração (usada primeiro) ou login gov.br do cliente. */
-export function CamposGov({ c, compacto = false }: { c?: AcessoGovTela; compacto?: boolean }) {
+export function CamposGov({ c, compacto = false, procuradores = [] }: { c?: AcessoGovTela; compacto?: boolean; procuradores?: ProcuradorOpcao[] }) {
   const py = compacto ? "py-1.5" : "";
   const vencida = !!c?.procuracao_validade && c.procuracao_validade.slice(0, 10) < new Date().toISOString().slice(0, 10);
   return (
@@ -15,6 +16,14 @@ export function CamposGov({ c, compacto = false }: { c?: AcessoGovTela; compacto
       <label className="mt-2 flex items-center gap-2 text-sm">
         <input type="checkbox" name="procuracao_gov" defaultChecked={!!c?.procuracao_gov} className="h-4 w-4 accent-vigia" /> Cliente deu procuração no gov.br para a Vigia Placa
       </label>
+      <div className="mt-2">
+        <label className="rotulo">Procuração para</label>
+        <select name="procurador_usuario_id" defaultValue={c?.procurador_usuario_id ?? (procuradores.length === 1 ? procuradores[0].id : "")} className={`campo ${py}`}>
+          <option value="">{procuradores.length ? "Procurador padrão (Backoffice)" : "Nenhum procurador cadastrado ainda"}</option>
+          {procuradores.map((p) => <option key={p.id} value={p.id}>{p.nome} · CPF {p.gov_cpf}{p.tem_senha ? "" : " (sem senha)"}</option>)}
+        </select>
+        {!procuradores.length && <p className="mt-1 text-[11px] text-ambar">O procurador cadastra o próprio gov.br em Minha conta.</p>}
+      </div>
       <div className={`mt-2 grid gap-2 ${compacto ? "" : "sm:grid-cols-2"}`}>
         <div>
           <label className="rotulo">Validade da procuração</label>
@@ -44,11 +53,11 @@ export function CamposGov({ c, compacto = false }: { c?: AcessoGovTela; compacto
   );
 }
 
-export function CamposAntt({ c, compacto = false }: { c?: AcessoGovTela & { antt_ativo?: boolean | null; antt_login?: string | null; antt_cnpj_representado?: string | null; tem_senha_antt?: boolean | null; documento?: string | null }; compacto?: boolean }) {
+export function CamposAntt({ c, compacto = false, procuradores = [] }: { procuradores?: ProcuradorOpcao[]; c?: AcessoGovTela & { antt_ativo?: boolean | null; antt_login?: string | null; antt_cnpj_representado?: string | null; tem_senha_antt?: boolean | null; documento?: string | null }; compacto?: boolean }) {
   const py = compacto ? "py-1.5" : "";
   return (
     <div className="space-y-3">
-    <CamposGov c={c} compacto={compacto} />
+    <CamposGov c={c} compacto={compacto} procuradores={procuradores} />
     <div className="rounded-xl border border-borda p-3">
       <label className="flex items-center gap-2 text-sm font-semibold">
         <input type="checkbox" name="antt_ativo" defaultChecked={!!c?.antt_ativo} className="h-4 w-4 accent-vigia" /> Monitorar multas da ANTT (SIFAMA)

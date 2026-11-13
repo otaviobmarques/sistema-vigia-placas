@@ -10,6 +10,7 @@ import { CamposPrecosCliente } from "@/components/precos-cliente";
 import { franquiasAtivas } from "@/lib/acesso";
 import { CamposAntt } from "@/components/campos-antt";
 import { SQL_ACESSO_GOV } from "@/lib/services/acesso-gov";
+import { listarProcuradores } from "@/lib/services/acesso-gov";
 
 export const metadata = { title: "Clientes" };
 const FORMA: Record<string, string> = { pix: "Pix", boleto: "Boleto", cartao: "Cartão" };
@@ -17,6 +18,7 @@ const FORMA: Record<string, string> = { pix: "Pix", boleto: "Boleto", cartao: "C
 export default async function Carteira({ searchParams }: { searchParams: Promise<{ q?: string; ok?: string; erro?: string }> }) {
   const s = await exigirSessao(["franqueado", "franqueadora"]);
   const sp = await searchParams;
+  const procuradores = await listarProcuradores();
   const mes = hojeISO().slice(0, 7);
   const d = await noEscopo(s, async (db) => {
     const clientes = await db.q(
@@ -83,7 +85,7 @@ export default async function Carteira({ searchParams }: { searchParams: Promise
               <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-suave"><span>Desde</span><input type="date" name="sne_desde" defaultValue={c.sne_desde ? String(c.sne_desde).slice(0, 10) : ""} className="campo w-40 py-1" /><span>(em branco = vale para todas as multas)</span></div>
               <p className="mt-1 text-[11px] text-suave">Proprietário com adesão ao Sistema de Notificação Eletrônica: as multas de órgãos aderentes têm direito a 40% de desconto.</p>
             </div>
-                              <CamposAntt c={c} compacto />
+                              <CamposAntt c={c} compacto procuradores={procuradores} />
                               <div><label className="rotulo">Forma de pagamento</label><select name="forma_cobranca" defaultValue={c.forma_cobranca} className="campo py-1.5"><option value="pix">Pix</option><option value="boleto">Boleto</option><option value="cartao">Cartão de crédito</option></select></div>
                               <div className="grid grid-cols-2 gap-2">
                                 <div><label className="rotulo">Fechamento</label><select name="ciclo_fechamento" defaultValue={c.ciclo_fechamento} className="campo py-1.5">{Object.entries(CICLOS).map(([k, v]) => <option key={k} value={k}>{v.split(" (")[0]}</option>)}</select></div>

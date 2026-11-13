@@ -109,6 +109,28 @@ export async function trocarSenha(f: FormData) {
   ir(sessao.trocarSenha ? "/" : "/conta", { ok: "Senha alterada." });
 }
 
+/** "Minha conta": o usuário da equipe cadastra o próprio gov.br de procurador. */
+export async function salvarMeuGov(f: FormData) {
+  const sessao = await exigirSessao(["franqueadora"]);
+  if (!["admin", "gestor"].includes(sessao.perfil)) ir("/conta", { erro: "Só o administrador ou o gestor pode ser procurador." });
+  const cpf = somenteDocumento(s(f, "gov_cpf")) || null;
+  const senha = String(f.get("gov_senha") ?? "") || null;
+  if (cpf && tipoDocumento(cpf) !== "PF") ir("/conta", { erro: "Informe um CPF válido (o login gov.br é sempre o CPF)." });
+  if (cpf && !senha) {
+    const tem = await sistema((db) => db.one("select 1 from usuarios where id = $1 and gov_senha_cifrada is not null", [sessao.usuarioId]));
+    if (!tem) ir("/conta", { erro: "Informe também a sua senha gov.br." });
+  }
+  await sistema(async (db) => {
+    await db.q(
+      `update usuarios set gov_cpf = $2, gov_senha_cifrada = case when $2::text is null then null when $3::text is null then gov_senha_cifrada else $3 end where id = $1`,
+      [sessao.usuarioId, cpf, senha ? cifrar(senha) : null],
+    );
+    await auditar(db, { usuarioId: sessao.usuarioId, acao: "procurador_gov_usuario", entidade: "usuario", entidadeId: sessao.usuarioId, dados: { cpf: !!cpf, senhaNova: !!senha } });
+  });
+  revalidatePath("/", "layout");
+  ir("/conta", { ok: cpf ? "Acesso de procurador salvo. Nos clientes que deram procuração para você, escolha seu nome no campo “Procuração para”." : "Você deixou de ser procurador." });
+}
+
 export async function sair() {
   await encerrarSessao();
   redirect("/login");
@@ -1250,7 +1272,8 @@ function lerAcessoGov(f: FormData) {
   if (login && tipoDocumento(login) !== "PF") erro = "Login gov.br: é sempre o CPF da pessoa (sócio ou responsável).";
   else if (validade && !/^\d{4}-\d{2}-\d{2}$/.test(validade)) erro = "Validade da procuração inválida.";
   else if (arquivo && arquivo.size > 4 * 1024 * 1024) erro = "PDF da procuração muito grande (máximo 4 MB).";
-  return { procuracao, validade, login, senha, arquivo, multas: f.get("gov_multas_ativo") === "on", erro };
+  const procurador = s(f, "procurador_usuario_id") || null;
+  return { procuracao, validade, procurador, login, senha, arquivo, multas: f.get("gov_multas_ativo") === "on", erro };
 }
 
 function lerAcessoAntt(f: FormData): { ativo: boolean; login: string | null; senha: string | null; representado: string | null; gov: ReturnType<typeof lerAcessoGov>; erro?: string } {
@@ -1277,8 +1300,9 @@ async function gravarAcessoAntt(db: Db, clienteId: string, a: ReturnType<typeof 
   if (!g) return;
   await db.q(
     `update clientes set procuracao_gov = $2, procuracao_validade = $3, gov_login = $4, gov_multas_ativo = $5, gov_ultimo_erro = null,
-       gov_senha_cifrada = case when $4::text is null then null when $6::text is null then gov_senha_cifrada else $6 end where id = $1`,
-    [clienteId, g.procuracao, g.validade, g.login, g.multas, g.senha ? cifrar(g.senha) : null],
+       gov_senha_cifrada = case when $4::text is null then null when $6::text is null then gov_senha_cifrada else $6 end,
+       procurador_usuario_id = (select id from usuarios where id = $7::uuid and nivel = 'franqueadora') where id = $1`,
+    [clienteId, g.procuracao, g.validade, g.login, g.multas, g.senha ? cifrar(g.senha) : null, g.procuracao ? g.procurador : null],
   );
   if (g.arquivo) {
     const buf = Buffer.from(await g.arquivo.arrayBuffer());
@@ -1308,6 +1332,12 @@ export async function salvarProcurador(f: FormData) {
   ir("/backoffice?aba=fontes", { ok: cpf ? "Procurador gov.br salvo. Clientes com procuração passam a ser consultados com este acesso." : "Procurador removido." });
 }
 
+/** Confere que o usuário enxerga a multa (RLS); a chamada à fonte roda com a conexão de sistema (lê o procurador). */
+async function multaNoEscopo(sessao: Sessao, id: string, tabela: "multas" | "multas_antt" = "multas") {
+  const ok = await noEscopo(sessao, (db) => db.one(`select 1 from ${tabela} where id = $1`, [id]));
+  if (!ok) throw new Error("Multa não encontrada.");
+}
+
 // ---------------- SNE (SENATRAN) sob demanda: notificação e boleto com desconto ----------------
 
 export async function notificacaoSneAcao(f: FormData) {
@@ -1315,7 +1345,8 @@ export async function notificacaoSneAcao(f: FormData) {
   const id = s(f, "id");
   const volta = `/multas/${id}`;
   try {
-    await noEscopo(sessao, (db) => baixarNotificacaoSne(db, id));
+    await multaNoEscopo(sessao, id);
+    await sistema((db) => baixarNotificacaoSne(db, id));
   } catch (e: any) {
     ir(volta, { erro: e.message });
   }
@@ -1329,7 +1360,8 @@ export async function boletoSneAcao(f: FormData) {
   const volta = `/multas/${id}`;
   let r: Awaited<ReturnType<typeof boletoSne>> | null = null;
   try {
-    r = await noEscopo(sessao, (db) => boletoSne(db, id));
+    await multaNoEscopo(sessao, id);
+    r = await sistema((db) => boletoSne(db, id));
   } catch (e: any) {
     ir(volta, { erro: e.message });
   }
@@ -1374,7 +1406,8 @@ export async function baixarAutoAnttAcao(f: FormData) {
   const volta = s(f, "volta") || "/antt";
   let docId: string | null = null;
   try {
-    docId = await noEscopo(sessao, (db) => baixarAutoAntt(db, id));
+    await multaNoEscopo(sessao, id, "multas_antt");
+    docId = await sistema((db) => baixarAutoAntt(db, id));
   } catch (e: any) {
     ir(volta, { erro: e.message });
   }
@@ -1388,7 +1421,8 @@ export async function segundaViaAnttAcao(f: FormData) {
   const volta = s(f, "volta") || "/antt";
   let r: { codigo: string | null; temPdf: boolean } | null = null;
   try {
-    r = await noEscopo(sessao, (db) => segundaViaAntt(db, id));
+    await multaNoEscopo(sessao, id, "multas_antt");
+    r = await sistema((db) => segundaViaAntt(db, id));
   } catch (e: any) {
     ir(volta, { erro: e.message });
   }
