@@ -12,6 +12,8 @@ describe("período dos relatórios", () => {
     expect(resolverPeriodo("mes", hoje)).toEqual({ inicio: "2026-11-01", fim: "2026-11-30" });
     expect(resolverPeriodo("trimestre", hoje)).toEqual({ inicio: "2026-10-01", fim: "2026-12-31" });
     expect(resolverPeriodo("trimestre", "2026-02-03")).toEqual({ inicio: "2026-01-01", fim: "2026-03-31" });
+    expect(resolverPeriodo("semestre", hoje)).toEqual({ inicio: "2026-07-01", fim: "2026-12-31" });
+    expect(resolverPeriodo("semestre", "2026-03-10")).toEqual({ inicio: "2026-01-01", fim: "2026-06-30" });
     expect(resolverPeriodo("ano", hoje)).toEqual({ inicio: "2026-01-01", fim: "2026-12-31" });
     expect(resolverPeriodo("tudo", hoje)).toBeNull();
   });

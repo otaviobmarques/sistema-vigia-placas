@@ -41,6 +41,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     { href: "/pagamentos", rotulo: "Pagamentos", n: nCarrinho || undefined },
     { href: "/extrato", rotulo: "Extrato de Economia" },
     { href: "/relatorios", rotulo: "Relatórios" },
+    { href: "/relatorio-gerencial", rotulo: "Relatório gerencial" },
     { href: "/condutores", rotulo: "Condutores" },
     { href: "/enviar", rotulo: "Enviar notificação" },
     { href: "/configuracoes", rotulo: "Configurações" },

@@ -99,6 +99,7 @@ export default async function Carteira({ searchParams }: { searchParams: Promise
                       <td className={`num ${Number(c.economia_mes) ? "font-semibold text-economia" : "text-suave"}`}>{brl(Number(c.economia_mes))}</td>
                       <td className="text-right">
                         <div className="flex justify-end gap-3 whitespace-nowrap text-sm">
+                          <a href={`/relatorio-gerencial?cliente=${c.id}`} className="link">Relatório</a>
                           <a href={`/placas/nova?cliente=${c.id}`} className="link">+ Placa</a>
                           <form action={entrarCliente}><input type="hidden" name="clienteId" value={c.id} /><input type="hidden" name="destino" value="/placas/importar" /><button className="link">Importar</button></form>
                           <form action={entrarCliente}><input type="hidden" name="clienteId" value={c.id} /><button className="link">Abrir</button></form>
