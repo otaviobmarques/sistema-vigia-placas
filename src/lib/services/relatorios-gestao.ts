@@ -201,17 +201,31 @@ export async function gerarRelatorioGestao(db: Db, tipo: TipoRelatorio, f: Filtr
       const vencida = !!m.vencimento && m.vencimento < hoje;
       return { m, v, hojeV, vencida, comDesconto: v.com40 ?? v.com20 };
     });
+    const pa: unknown[] = [];
+    const filtroA = porCliente(f, pa, "a.cliente_id") + noPeriodo(f, pa, tipo === "multas-pagar" ? "a.vencimento" : "a.data_infracao");
+    const antt = await db.q<any>(
+      `select a.*, c.nome as cliente_nome, ${SQL_GRUPO} as grupo from multas_antt a join clientes c on c.id = a.cliente_id
+        where a.aberta and c.excluido_em is null${filtroA} order by a.vencimento nulls last`,
+      pa,
+    );
     if (tipo === "multas-pagar") {
-      const linhas = calc.filter((x) => pagavel(x.m.estado as EstadoMulta)).map(({ m, v, hojeV, vencida, comDesconto }) => ({
+      const linhas: Record<string, any>[] = calc.filter((x) => pagavel(x.m.estado as EstadoMulta)).map(({ m, v, hojeV, vencida, comDesconto }) => ({
         cliente: m.cliente_nome, grupo: m.grupo, placa: m.placa, apelido: m.apelido, auto: m.auto_infracao, infracao: m.descricao, orgao: m.orgao_nome,
         data: m.data_infracao, vencimento: m.vencimento, dias: m.vencimento ? Math.round((Date.parse(m.vencimento) - Date.parse(hoje)) / 864e5) : null,
         cheio: v.cheio, desconto: comDesconto, pagar: hojeV.valor, faixa: hojeV.desconto ? `${hojeV.desconto}%` : vencida ? "Vencida" : "Sem desconto",
-        situacao: ESTADOS[m.estado as EstadoMulta]?.rotulo ?? m.estado,
+        situacao: ESTADOS[m.estado as EstadoMulta]?.rotulo ?? m.estado, origem: "Trânsito",
       }));
-      const colunas = [c("cliente", "Cliente"), c("grupo", "Grupo econômico"), c("placa", "Placa"), c("apelido", "Veículo"), c("auto", "Auto de infração"), c("infracao", "Infração"), c("orgao", "Órgão"),
+      // ANTT: multa no CNPJ, sem desconto de 20%/40% (regras próprias da agência).
+      for (const a of antt) linhas.push({
+        cliente: a.cliente_nome, grupo: a.grupo, placa: a.placa, apelido: null, auto: a.auto, infracao: a.descricao ?? "Infração ANTT", orgao: "ANTT",
+        data: a.data_infracao, vencimento: a.vencimento, dias: a.vencimento ? Math.round((Date.parse(a.vencimento) - Date.parse(hoje)) / 864e5) : null,
+        cheio: Number(a.valor), desconto: Number(a.valor), pagar: Number(a.valor), faixa: a.impeditiva ? "Impeditiva" : "—", situacao: a.situacao ?? "Em aberto", origem: "ANTT",
+      });
+      linhas.sort((x, y) => String(x.vencimento ?? "9999").localeCompare(String(y.vencimento ?? "9999")));
+      const colunas = [c("cliente", "Cliente"), c("grupo", "Grupo econômico"), c("origem", "Origem"), c("placa", "Placa"), c("apelido", "Veículo"), c("auto", "Auto de infração"), c("infracao", "Infração"), c("orgao", "Órgão"),
         c("data", "Data da infração", "data"), c("vencimento", "Vencimento", "data"), c("dias", "Dias para vencer", "num"), c("cheio", "Valor da multa", "brl"), c("desconto", "Valor com desconto", "brl"),
         c("pagar", "Valor a pagar hoje", "brl"), c("faixa", "Desconto hoje"), c("situacao", "Situação")];
-      return { titulo, descricao: `Vencimento: ${textoPeriodo(f.periodo ?? null)}. ` + "Multas que já podem ser pagas, do vencimento mais próximo ao mais distante. \"Valor a pagar hoje\" aplica o desconto que ainda vale (40% com SNE, 20% até o vencimento) ou o valor cheio se venceu.",
+      return { titulo, descricao: `Vencimento: ${textoPeriodo(f.periodo ?? null)}. ` + "Multas de trânsito e da ANTT que já podem ser pagas, do vencimento mais próximo ao mais distante. \"Valor a pagar hoje\" aplica o desconto que ainda vale (40% com SNE, 20% até o vencimento) ou o valor cheio se venceu; a ANTT não tem esses descontos.",
         linhas: linhas, colunas };
     }
     // valores-multas: resumo por cliente
@@ -222,9 +236,15 @@ export async function gerarRelatorioGestao(db: Db, tipo: TipoRelatorio, f: Filtr
       l.multas++; l.cheio += v.cheio; l.desconto += comDesconto; l.pagar += hojeV.valor; l.economia += v.cheio - hojeV.valor; if (v.com40 !== null) l.com40++;
       por.set(k, l);
     }
-    const linhas = [...por.values()].sort((a, b) => b.cheio - a.cheio);
-    const colunas = [c("cliente", "Cliente"), c("grupo", "Grupo econômico"), c("multas", "Multas em aberto", "num"), c("com40", "Com direito a 40% (SNE)", "num"), c("cheio", "Valor da multa", "brl"),
-      c("desconto", "Valor com desconto", "brl"), c("pagar", "Valor a ser pago hoje", "brl"), c("economia", "Economia pagando hoje", "brl")];
+    for (const a of antt) {
+      const l = por.get(a.cliente_id) ?? { cliente: a.cliente_nome, grupo: a.grupo, multas: 0, cheio: 0, desconto: 0, pagar: 0, economia: 0, com40: 0 };
+      l.antt = (l.antt ?? 0) + Number(a.valor); l.antt_qtd = (l.antt_qtd ?? 0) + 1;
+      por.set(a.cliente_id, l);
+    }
+    const linhas = [...por.values()].map((l) => ({ ...l, antt: l.antt ?? 0, antt_qtd: l.antt_qtd ?? 0, total: l.pagar + (l.antt ?? 0) })).sort((a, b) => b.total - a.total);
+    const colunas = [c("cliente", "Cliente"), c("grupo", "Grupo econômico"), c("multas", "Multas de trânsito", "num"), c("com40", "Com direito a 40% (SNE)", "num"), c("cheio", "Valor da multa", "brl"),
+      c("desconto", "Valor com desconto", "brl"), c("pagar", "Valor a ser pago hoje", "brl"), c("economia", "Economia pagando hoje", "brl"),
+      c("antt_qtd", "Multas ANTT", "num"), c("antt", "ANTT em aberto", "brl"), c("total", "Total a pagar hoje", "brl")];
     return { titulo, descricao: `Infrações: ${textoPeriodo(f.periodo ?? null)}. ` + "Multas em aberto por cliente: valor cheio, valor com o maior desconto possível (40% com SNE ou 20%) e quanto se paga hoje, com os descontos que ainda valem.", linhas: linhas, colunas };
   }
 

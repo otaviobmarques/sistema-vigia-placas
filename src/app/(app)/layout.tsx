@@ -36,6 +36,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const itensCliente: Item[] = [
     { href: "/hoje", rotulo: "Faça hoje" },
     { href: "/multas", rotulo: "Multas", n: nNovasCliente || undefined, novas: true },
+    { href: "/antt", rotulo: "Multas ANTT" },
     { href: "/placas", rotulo: "Placas" },
     { href: "/pagamentos", rotulo: "Pagamentos", n: nCarrinho || undefined },
     { href: "/extrato", rotulo: "Extrato de Economia" },
@@ -58,6 +59,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     { href: "/carteira", rotulo: "Clientes" },
     { href: "/gestao/grupos", rotulo: "Grupos econômicos" },
     { href: "/gestao/multas", rotulo: "Multas em aberto", n: nNovasEquipe || undefined, novas: true },
+    { href: "/gestao/antt", rotulo: "Multas ANTT" },
     { href: "/placas/nova", rotulo: "Cadastrar placa" },
     { href: "/placas/importar", rotulo: "Importar placas" },
     { href: "/gestao/reprocessamento", rotulo: "Reprocessamento de placas", n: nReprocessar || undefined },

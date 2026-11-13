@@ -32,6 +32,8 @@ export default async function Painel({ searchParams }: { searchParams: Promise<{
          (select count(*) from clientes where ativo) as clientes,
          (select count(*) from multas where estado not in ('paga','cancelada')) as multas_abertas,
          (select coalesce(sum(valor),0) from multas where estado not in ('paga','cancelada')) as valor_aberto,
+         (select count(*) from multas_antt where aberta) as antt_abertas,
+         (select coalesce(sum(valor),0) from multas_antt where aberta) as antt_valor,
          (select count(*) from multas where to_char(detectada_em,'YYYY-MM') = $1) as multas_mes,
          (select count(*) from multas) as multas_total,
          (select coalesce(sum(valor),0) from economias where comprovada and mes = $1) as economia_mes,
@@ -93,7 +95,7 @@ export default async function Painel({ searchParams }: { searchParams: Promise<{
       <p className="sobretitulo mb-2">Carteira</p>
       <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Numero rotulo="Placas gerenciadas" valor={placas} detalhe={`${t.clientes} clientes · ${t.placas_pausadas} pausada(s)`} />
-        <Numero rotulo="Multas em aberto" tom={Number(t.multas_abertas) ? "rec" : "normal"} valor={Number(t.multas_abertas)} detalhe={`${brl(Number(t.valor_aberto))} em valor cheio`} />
+        <Numero rotulo="Multas em aberto" tom={Number(t.multas_abertas) ? "rec" : "normal"} valor={Number(t.multas_abertas)} detalhe={<>{brl(Number(t.valor_aberto))} em valor cheio{Number(t.antt_abertas) > 0 && <span className="block">+ ANTT: {Number(t.antt_abertas)} · {brl(Number(t.antt_valor))}</span>}</>} />
         <Numero rotulo="Multas detectadas no mês" valor={Number(t.multas_mes)} detalhe={`${t.multas_total} no total`} />
         <Numero tom="economia" rotulo="Economia gerada aos clientes" valor={brl(Number(t.economia_mes))} detalhe="comprovada no mês" />
       </div>
