@@ -10,8 +10,8 @@ import { multasEmAberto } from "@/lib/services/relatorios-gestao";
 import { entrarCliente } from "../../../actions";
 import { ehNova, SeloNova } from "@/components/selo-nova";
 import { LogoOrgao } from "@/components/logo-orgao";
-import { SeloDesconto } from "@/components/selo-desconto";
-import { seloDesconto } from "@/lib/domain/ctb";
+import { SelosDesconto } from "@/components/selo-desconto";
+import { selosDesconto } from "@/lib/domain/ctb";
 import { regra } from "@/lib/services/multas";
 
 const SeloContagem = ({ n }: { n: number }) => <span className="rounded-full bg-ambar px-1.5 text-xs font-bold text-vigia">{n}</span>;
@@ -68,7 +68,7 @@ export default async function MultasEmAberto({ searchParams }: { searchParams: P
                   <tr key={m.id}>
                     <td className="text-sm font-semibold">{m.cliente}</td>
                     <td><Placa placa={m.placa} tamanho="sm" /><div className="mt-1 text-xs text-suave">{m.apelido ?? ""}</div></td>
-                    <td className="text-sm"><div className="flex items-start gap-2"><SeloDesconto {...seloDesconto(regra(m as any), hoje)} /><div>{m.descricao}{ehNova(m.criado_em) && <SeloNova />}<div className="text-xs text-suave"><LogoOrgao id={m.orgao_id} nome={m.orgao} /> · {dataBR(m.data_infracao)} · {m.pontos} pts</div></div></div></td>
+                    <td className="text-sm"><div className="flex items-start gap-2"><SelosDesconto selos={selosDesconto(regra(m as any), hoje)} /><div>{m.descricao}{ehNova(m.criado_em) && <SeloNova />}<div className="text-xs text-suave"><LogoOrgao id={m.orgao_id} nome={m.orgao} /> · {dataBR(m.data_infracao)} · {m.pontos} pts</div></div></div></td>
                     <td className="text-xs">{ESTADOS[m.estado as EstadoMulta]?.rotulo ?? m.estado}</td>
                     <td>{m.prazo ? <ChipPrazo dias={diasEntre(hoje, m.prazo)} /> : <span className="text-xs text-suave">—</span>}<div className="text-[11px] text-suave">{m.prazo ? dataBR(m.prazo) : ""}</div></td>
                     <td className="text-xs">{m.condutor_indicado ? <b>{m.condutor_indicado}</b> : <span className="text-suave">não indicado</span>}{m.condutores_placa && <div className="text-suave">dirigem: {m.condutores_placa}</div>}</td>

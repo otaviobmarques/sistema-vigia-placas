@@ -237,21 +237,26 @@ describe("zeros à esquerda que faltam", async () => {
   });
 });
 
-describe("selo de desconto (20% / 40%)", async () => {
-  const { seloDesconto } = await import("./ctb");
+describe("selos de desconto (20% / 40%)", async () => {
+  const { selosDesconto } = await import("./ctb");
   const base = { valor: 19523, estado: "notificada" as const, dataInfracao: "2026-10-10", notificadaEm: "2026-10-20", vencimento: "2026-11-30", sneAdesaoEm: null, orgaoAderenteSne: true, tipoProprietario: "PJ" as const, condutorIndicado: false };
-  it("todos têm 20% até o vencimento", () => {
-    const s = seloDesconto(base, "2026-11-13");
-    expect(s.faixa).toBe("20");
-    expect(s.texto).toMatch(/não está registrado no SNE/);
+  const faixas = (m: typeof base | any, hoje = "2026-11-13") => selosDesconto(m, hoje).map((s) => s.faixa);
+  it("sem SNE: só 20%, explicando por quê", () => {
+    expect(faixas(base)).toEqual(["20"]);
+    expect(selosDesconto(base, "2026-11-13")[0].texto).toMatch(/não está registrado no SNE/);
   });
-  it("40% só com SNE antes da infração e órgão aderente", () => {
-    expect(seloDesconto({ ...base, sneAdesaoEm: "1900-01-01" }, "2026-11-13").faixa).toBe("40");
-    expect(seloDesconto({ ...base, sneAdesaoEm: "2026-11-01" }, "2026-11-13").texto).toMatch(/depois da infração/);
-    expect(seloDesconto({ ...base, sneAdesaoEm: "1900-01-01", orgaoAderenteSne: false }, "2026-11-13").faixa).toBe("20");
-    expect(seloDesconto({ ...base, sneAdesaoEm: "1900-01-01", estado: "em_defesa" }, "2026-11-13").faixa).toBe("20");
+  it("com SNE antes da infração e órgão aderente: os dois selos, 40% e 20%", () => {
+    const s = selosDesconto({ ...base, sneAdesaoEm: "1900-01-01" }, "2026-11-13");
+    expect(s.map((x) => x.faixa)).toEqual(["40", "20"]);
+    expect(s[0].texto).toMatch(/abrindo mão de recorrer/);
+    expect(s[1].texto).toMatch(/mantenha o direito de recorrer/);
+  });
+  it("adesão depois da infração, órgão não aderente ou em recurso: só 20%", () => {
+    expect(faixas({ ...base, sneAdesaoEm: "2026-11-01" })).toEqual(["20"]);
+    expect(faixas({ ...base, sneAdesaoEm: "1900-01-01", orgaoAderenteSne: false })).toEqual(["20"]);
+    expect(faixas({ ...base, sneAdesaoEm: "1900-01-01", estado: "em_defesa" })).toEqual(["20"]);
   });
   it("depois do vencimento, sem desconto", () => {
-    expect(seloDesconto({ ...base, sneAdesaoEm: "1900-01-01" }, "2026-12-01").faixa).toBeNull();
+    expect(faixas({ ...base, sneAdesaoEm: "1900-01-01" }, "2026-12-01")).toEqual([null]);
   });
 });
