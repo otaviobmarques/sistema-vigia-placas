@@ -1,11 +1,11 @@
 import type { Db } from "../db";
-import { COMPLEMENTARES, consultarMultas, erroDeConta, FONTES, infosimplesCobreUf, modoSimulado } from "../integrations/infosimples";
+import { COMPLEMENTARES, consultarMultas, FONTE_SENATRAN, erroDeConta, FONTES, infosimplesCobreUf, modoSimulado } from "../integrations/infosimples";
 import { consultarDirectData, directDataAtiva, SERVICO_DIRECTDATA } from "../integrations/directdata";
 
 function nomeFonte(servico: string) {
   if (servico === "simulado") return "Infosimples";
   if (servico === SERVICO_DIRECTDATA) return "Direct Data · Radar Serpro";
-  return `Infosimples · ${FONTES.find((f) => f.servico === servico)?.nome ?? servico}`;
+  return `Infosimples · ${[...FONTES, FONTE_SENATRAN].find((f) => f.servico === servico)?.nome ?? servico}`;
 }
 import { enfileirar } from "../integrations/mensagens";
 import { despacharOutbox } from "./despacho";
@@ -16,6 +16,8 @@ import { melhorValorHoje, prazoIndicacao, valoresMulta } from "../domain/ctb";
 import { brl } from "../domain/money";
 import { regra, registrarEvento, SELECT_MULTA, type MultaRow } from "./multas";
 import { guardarBoletoDaMulta } from "./documentos";
+import { acessoDoCliente } from "./acesso-gov";
+import { baixarNotificacaoSne } from "./senatran";
 
 const LIMITE_FALHAS = 5;
 
@@ -74,7 +76,7 @@ export async function resumoDiarioEquipe(db: Db) {
 export async function consultarPlaca(db: Db, placaId: string, opts: { avulsa?: boolean } = {}) {
   const p = await db.one(
     `select p.*, c.frequencia_padrao, c.nome as cliente_nome, c.whatsapp, c.email, c.alertas_canais, c.pagamento_auto, c.pagamento_auto_ate, c.tipo, c.documento
-     from placas p join clientes c on c.id = p.cliente_id where p.id = $1`,
+     , c.gov_multas_ativo from placas p join clientes c on c.id = p.cliente_id where p.id = $1`,
     [placaId],
   );
   if (!p) throw new Error("Placa não encontrada");
@@ -97,16 +99,19 @@ export async function consultarPlaca(db: Db, placaId: string, opts: { avulsa?: b
   const desligadas = new Set(
     (await db.q<{ id: string }>("select id from fontes where id like 'infosimples:%' and not ativa")).map((f) => f.id.slice("infosimples:".length)),
   );
+  // Acesso gov.br (procuração ou login do cliente): soma o SENATRAN/SNE, que traz multas de todos os órgãos e a notificação.
+  const acesso = p.gov_multas_ativo && infosimplesLigada && !desligadas.has(FONTE_SENATRAN.servico) ? await acessoDoCliente(db, p.cliente_id) : null;
+  const gov = acesso?.ok ? { login: acesso.login, senha: acesso.senha, cnpj: acesso.representado } : null;
   const consultar = (f: FonteDados) =>
     f === "directdata" ? consultarDirectData(p.placa, p.renavam).then((d) => ({ fonte: f, detalhes: [d], simulado: false }))
-      : consultarMultas(p.placa, p.renavam, p.uf, { documento: p.documento, desligadas }).then((r) => ({ fonte: f, detalhes: r.detalhes, simulado: r.simulado }));
+      : consultarMultas(p.placa, p.renavam, p.uf, { documento: p.documento, desligadas, gov }).then((r) => ({ fonte: f, detalhes: r.detalhes, simulado: r.simulado }));
   let rodadas = await Promise.all(escolha.primeiras.map(consultar));
   const algumaOk = (rs: typeof rodadas) => rs.some((x) => x.detalhes.some((d) => d.ok));
   if (!algumaOk(rodadas) && escolha.reserva) rodadas = [...rodadas, await consultar(escolha.reserva)];
   // DNIT (e outras complementares) rodam sempre: se a Infosimples não entrou nesta consulta, chama só elas.
-  const comp = COMPLEMENTARES.filter((s) => !desligadas.has(s));
+  const comp = [...COMPLEMENTARES, ...(gov ? [FONTE_SENATRAN.servico] : [])].filter((s) => !desligadas.has(s));
   if (infosimplesLigada && comp.length && !modoSimulado() && !rodadas.some((x) => x.fonte === "infosimples")) {
-    const r = await consultarMultas(p.placa, p.renavam, p.uf, { desligadas, apenas: comp });
+    const r = await consultarMultas(p.placa, p.renavam, p.uf, { desligadas, apenas: comp, gov });
     if (r.detalhes.length) rodadas = [...rodadas, { fonte: "infosimples" as const, detalhes: r.detalhes, simulado: false }];
   }
   const fonteUsada = rodadas.find((x) => x.detalhes.some((d) => d.ok))?.fonte ?? null;
@@ -136,6 +141,12 @@ export async function consultarPlaca(db: Db, placaId: string, opts: { avulsa?: b
       "insert into consultas (placa_id, cliente_id, fonte_id, custo, resultado, multas_encontradas, erro, avulsa) values ($1,$2,$3,$4,$5,$6,$7,$8)",
       [p.id, p.cliente_id, fid, d.custo, d.ok ? "ok" : "erro", d.multas.length, d.erro ?? null, !!opts.avulsa],
     );
+    if (d.servico === FONTE_SENATRAN.servico) {
+      // Erro no gov.br é do acesso deste cliente (senha, procuração, 2 etapas): fica no cliente e não desliga a fonte para os outros.
+      await db.q("update clientes set gov_ultimo_erro = $2 where id = $1", [p.cliente_id, d.ok ? null : `${acesso?.ok ? acesso.rotulo : "gov.br"}: ${d.erro}`]);
+      if (d.ok) await db.q("update fontes set falhas_seguidas = 0 where id = $1", [fid]);
+      continue;
+    }
     if (d.ok) await db.q("update fontes set falhas_seguidas = 0 where id = $1", [fid]);
     else if (erroDeConta(d) || /n[aã]o autorizad|token inv/i.test(d.erro ?? "")) await db.q("update fontes set ultima_falha = $2 where id = $1", [fid, `Problema na conta: ${d.erro}`]);
     else {
@@ -166,27 +177,28 @@ export async function consultarPlaca(db: Db, placaId: string, opts: { avulsa?: b
     if (existente) {
       await db.q(
         `update multas set notificada_em = coalesce(notificada_em, $2), vencimento = coalesce($3, vencimento), linha_digitavel = coalesce(linha_digitavel, $4),
-           boleto_url = coalesce($5, boleto_url), pix_copia_cola = coalesce($6, pix_copia_cola),
+           boleto_url = coalesce($5, boleto_url), pix_copia_cola = coalesce($6, pix_copia_cola), chave_infracao = coalesce($7, chave_infracao),
            estado = case when estado = 'detectada' and $2::date is not null then 'notificada' else estado end where id = $1`,
-        [existente.id, m.notificadaEm, m.vencimento, m.linhaDigitavel, m.boletoUrl ?? null, m.pixCopiaCola ?? null],
+        [existente.id, m.notificadaEm, m.vencimento, m.linhaDigitavel, m.boletoUrl ?? null, m.pixCopiaCola ?? null, m.chaveInfracao ?? null],
       );
       continue;
     }
     await db.q("insert into orgaos (id, nome, uf) values ($1,$2,$3) on conflict (id) do nothing", [m.orgaoId, m.orgaoNome, p.uf]);
     const ins = await db.one<{ id: string; nova: boolean }>(
       `insert into multas (placa_id, cliente_id, orgao_id, auto_infracao, codigo_infracao, descricao, gravidade, pontos, valor,
-         data_infracao, hora, local, estado, fonte, notificada_em, vencimento, linha_digitavel, boleto_url, pix_copia_cola)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+         data_infracao, hora, local, estado, fonte, notificada_em, vencimento, linha_digitavel, boleto_url, pix_copia_cola, chave_infracao)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
        on conflict (orgao_id, auto_infracao, codigo_infracao) do update set
          notificada_em = coalesce(multas.notificada_em, excluded.notificada_em),
          vencimento = coalesce(excluded.vencimento, multas.vencimento),
          linha_digitavel = coalesce(excluded.linha_digitavel, multas.linha_digitavel),
          boleto_url = coalesce(excluded.boleto_url, multas.boleto_url),
          pix_copia_cola = coalesce(excluded.pix_copia_cola, multas.pix_copia_cola),
+         chave_infracao = coalesce(excluded.chave_infracao, multas.chave_infracao),
          estado = case when multas.estado = 'detectada' and excluded.notificada_em is not null then 'notificada' else multas.estado end
        returning id, (xmax = 0) as nova`,
       [p.id, p.cliente_id, m.orgaoId, m.autoInfracao, m.codigoInfracao, m.descricao, m.gravidade, m.pontos, m.valor,
-       m.dataInfracao, m.hora, m.local, m.notificadaEm ? "notificada" : "detectada", m.fonteNome, m.notificadaEm, m.vencimento, m.linhaDigitavel, m.boletoUrl ?? null, m.pixCopiaCola ?? null],
+       m.dataInfracao, m.hora, m.local, m.notificadaEm ? "notificada" : "detectada", m.fonteNome, m.notificadaEm, m.vencimento, m.linhaDigitavel, m.boletoUrl ?? null, m.pixCopiaCola ?? null, m.chaveInfracao ?? null],
     );
     if (ins?.nova) {
       novas++;
@@ -232,6 +244,17 @@ export async function consultarPlaca(db: Db, placaId: string, opts: { avulsa?: b
     [p.id, p.placa],
   );
   for (const m of comBoleto) await guardarBoletoDaMulta(db, m).catch(() => false);
+  // Notificação do SNE (PDF) das multas em aberto que ainda não têm: no máximo 5 por consulta (cada download é cobrado).
+  if (gov) {
+    const semNotif = await db.q<{ id: string }>(
+      `select m.id from multas m where m.placa_id = $1 and m.chave_infracao is not null and m.estado not in ('paga','cancelada')
+         and not exists (select 1 from documentos d where d.multa_id = m.id and d.tipo = 'notificacao_sne' and d.expira_em > now())
+         and not exists (select 1 from notificacoes_capturadas n where n.multa_id = m.id and n.arquivo_base64 is not null)
+       order by m.data_infracao desc limit 5`,
+      [p.id],
+    );
+    for (const m of semNotif) await baixarNotificacaoSne(db, m.id).catch(() => null);
+  }
   if (novas > 0) await avisarEquipeMultasNovas(db, p, novas);
   return { ok: true, novas, total: r.multas.length };
 }

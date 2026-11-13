@@ -7,7 +7,7 @@ import type { Db } from "../db";
 export const DIAS_RETENCAO = 60;
 const LIMITE_BYTES = 8 * 1024 * 1024;
 
-export type TipoDocumento = "boleto" | "auto_antt" | "boleto_antt";
+export type TipoDocumento = "boleto" | "auto_antt" | "boleto_antt" | "notificacao_sne" | "procuracao";
 
 /** Baixa um PDF (ou imagem) da fonte. Devolve null se não for um arquivo de verdade (ex.: página de login). */
 export async function baixarArquivo(url: string): Promise<{ base64: string; mime: string } | null> {
@@ -27,12 +27,14 @@ export async function baixarArquivo(url: string): Promise<{ base64: string; mime
   }
 }
 
-export async function guardarDocumento(db: Db, d: { clienteId: string; multaId?: string | null; multaAnttId?: string | null; tipo: TipoDocumento; nome: string; mime: string; base64: string; origemUrl?: string | null }) {
-  // Um documento vigente por multa e tipo: o novo substitui o anterior.
-  await db.q("delete from documentos where tipo = $1 and (multa_id = $2 or multa_antt_id = $3)", [d.tipo, d.multaId ?? null, d.multaAnttId ?? null]);
+export async function guardarDocumento(db: Db, d: { clienteId: string; multaId?: string | null; multaAnttId?: string | null; tipo: TipoDocumento; nome: string; mime: string; base64: string; origemUrl?: string | null; expiraEm?: string | null }) {
+  // Um documento vigente por multa e tipo (ou por cliente, quando não é de multa): o novo substitui o anterior.
+  if (d.multaId || d.multaAnttId) await db.q("delete from documentos where tipo = $1 and (multa_id = $2 or multa_antt_id = $3)", [d.tipo, d.multaId ?? null, d.multaAnttId ?? null]);
+  else await db.q("delete from documentos where tipo = $1 and cliente_id = $2 and multa_id is null and multa_antt_id is null", [d.tipo, d.clienteId]);
   const r = await db.one<{ id: string }>(
-    `insert into documentos (cliente_id, multa_id, multa_antt_id, tipo, nome, mime, conteudo_base64, origem_url) values ($1,$2,$3,$4,$5,$6,$7,$8) returning id`,
-    [d.clienteId, d.multaId ?? null, d.multaAnttId ?? null, d.tipo, d.nome, d.mime, d.base64, d.origemUrl ?? null],
+    `insert into documentos (cliente_id, multa_id, multa_antt_id, tipo, nome, mime, conteudo_base64, origem_url, expira_em)
+     values ($1,$2,$3,$4,$5,$6,$7,$8, coalesce($9::timestamptz, now() + interval '60 days')) returning id`,
+    [d.clienteId, d.multaId ?? null, d.multaAnttId ?? null, d.tipo, d.nome, d.mime, d.base64, d.origemUrl ?? null, d.expiraEm ?? null],
   );
   return r!.id;
 }
@@ -46,6 +48,13 @@ export async function guardarBoletoDaMulta(db: Db, m: { id: string; cliente_id: 
   if (!arq) return false;
   await guardarDocumento(db, { clienteId: m.cliente_id, multaId: m.id, tipo: "boleto", nome: `boleto-${m.placa}-${m.auto_infracao}.${arq.mime === "application/pdf" ? "pdf" : "img"}`, mime: arq.mime, base64: arq.base64, origemUrl: m.boleto_url });
   return true;
+}
+
+/** Primeiro comprovante em PDF que a Infosimples devolve (site_receipts). */
+export async function pdfDaResposta(json: any) {
+  const urls: string[] = (Array.isArray(json?.site_receipts) ? json.site_receipts : []).filter((u: unknown): u is string => typeof u === "string");
+  for (const u of urls) { const a = await baixarArquivo(u); if (a?.mime === "application/pdf") return { ...a, url: u }; }
+  return null;
 }
 
 /** Retenção de 60 dias: apaga documentos vencidos e o arquivo das notificações enviadas há mais de 60 dias. */

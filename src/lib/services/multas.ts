@@ -40,6 +40,8 @@ export interface MultaRow {
   no_carrinho: boolean;
   doc_boleto?: string | null;
   doc_notificacao?: string | null;
+  doc_notificacao_sne?: string | null;
+  chave_infracao?: string | null;
   boleto_url?: string | null;
   pix_copia_cola?: string | null;
 }
@@ -52,7 +54,8 @@ export const SELECT_MULTA = `
          o.nome as orgao_nome, o.aderente_sne, cd.nome as condutor_nome,
          exists (select 1 from carrinho_itens ci where ci.multa_id = m.id) as no_carrinho,
          (select d.id from documentos d where d.multa_id = m.id and d.tipo = 'boleto' and d.expira_em > now() limit 1) as doc_boleto,
-         (select n.id from notificacoes_capturadas n where n.multa_id = m.id and n.arquivo_base64 is not null order by n.criado_em desc limit 1) as doc_notificacao
+         (select n.id from notificacoes_capturadas n where n.multa_id = m.id and n.arquivo_base64 is not null order by n.criado_em desc limit 1) as doc_notificacao,
+         (select d.id from documentos d where d.multa_id = m.id and d.tipo = 'notificacao_sne' and d.expira_em > now() limit 1) as doc_notificacao_sne
   from multas m
   join placas p on p.id = m.placa_id
   join clientes c on c.id = m.cliente_id
