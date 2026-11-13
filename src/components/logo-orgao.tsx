@@ -2,6 +2,7 @@
 /** Logo completo (detalhe) e só a sigla (listas, onde o texto miúdo fica ilegível). */
 const LOGOS: Record<string, { completo: string; sigla: string }> = {
   DNIT: { completo: "/orgaos/dnit.png", sigla: "/orgaos/dnit-sigla.png" },
+  ANTT: { completo: "/orgaos/antt.png", sigla: "/orgaos/antt.png" },
 };
 
 export const logoDoOrgao = (id: string | null | undefined) => (id ? LOGOS[id.toUpperCase()] ?? null : null);
