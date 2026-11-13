@@ -69,7 +69,7 @@ export default async function MultasEmAberto({ searchParams }: { searchParams: P
         </td>
         <td className="num text-right font-bold">{brl(t.cheio)}</td>
         <td className="num text-right font-bold">{t.tem20 ? brl(t.c20) : "—"}</td>
-        <td className="num text-right font-bold">{t.tem40 ? brl(t.c40) : "—"}</td>
+        <td className="num text-right font-bold">{t.tem40 ? brl(t.c40) : <span className={`text-xs font-semibold ${forte ? "text-white/70" : "text-suave"}`}>Inelegível</span>}</td>
         <td />
       </tr>
     );
@@ -115,7 +115,7 @@ export default async function MultasEmAberto({ searchParams }: { searchParams: P
                     <td className="text-xs">{m.condutor_indicado ? <b>{m.condutor_indicado}</b> : <span className="text-suave">não indicado</span>}{m.condutores_placa && <div className="text-suave">dirigem: {m.condutores_placa}</div>}</td>
                     <td className="num text-right font-semibold">{brl(Number(m.valor))}</td>
                     <td className="num text-right">{c20 !== null ? brl(c20) : <span className="text-suave">—</span>}</td>
-                    <td className="num text-right">{c40 !== null ? <b className="text-rec">{brl(c40)}</b> : <span className="text-suave">—</span>}</td>
+                    <td className="num text-right">{c40 !== null ? <b className="text-rec">{brl(c40)}</b> : <span className="text-xs text-suave" title={selos.find((x) => x.faixa === "20")?.texto.replace(/^20%: [^.]*\. /, "") ?? selos[0]?.texto}>Inelegível</span>}</td>
                     <td className="text-right"><form action={entrarCliente}><input type="hidden" name="clienteId" value={m.cliente_id} /><input type="hidden" name="destino" value={`/multas/${m.id}`} /><button className="link text-sm">Abrir</button></form></td>
                   </tr>
                 ))}
