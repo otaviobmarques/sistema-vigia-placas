@@ -1,7 +1,7 @@
 import type { Db } from "../db";
 import { calcularSaving } from "../domain/financeiro";
 import { percentual } from "../domain/money";
-import { ehCiclo, fracaoMensal, periodoDe, periodosDoMes, vencimentoDe, type Periodo } from "../domain/ciclo";
+import { ehCiclo, fracaoCobrada, fracaoMensal, periodoDe, periodosDoMes, vencimentoDe, type Ciclo, type Periodo } from "../domain/ciclo";
 import { hojeISO, somarDias } from "../domain/dates";
 
 const periodoDoMes = (mes: string): Periodo => periodoDe("mensal", `${mes}-01`);
@@ -22,10 +22,12 @@ export async function calcularFatura(db: Db, clienteId: string, ref: string | Pe
   );
   if (!c) throw new Error("Cliente não encontrado");
   const cfg = await db.one("select * from configuracao");
-  // Cada placa ativa paga só os dias do período em que já estava cadastrada (cliente novo não paga período anterior).
+  // Cobrança sempre cheia: a placa paga o ciclo inteiro em que foi cadastrada (mês cheio no ciclo mensal), qualquer que seja o dia.
+  // Não paga ciclos anteriores ao cadastro.
   const ativas = await db.q<{ desde: string }>("select to_char(criado_em::date, 'YYYY-MM-DD') as desde from placas where cliente_id = $1 and status <> 'pausada' and criado_em::date <= $2", [clienteId, periodo.fim]);
   const placas = ativas.length;
-  const fracaoPlacas = ativas.reduce((a, p) => a + fracaoMensal({ inicio: p.desde > periodo.inicio ? p.desde : periodo.inicio, fim: periodo.fim }), 0);
+  const ciclo: Ciclo = ehCiclo(c.ciclo_fechamento) ? c.ciclo_fechamento : "mensal";
+  const fracaoPlacas = ativas.reduce((a, p) => a + fracaoCobrada(ciclo, periodo, p.desde), 0);
   // Mês inteiro: pela competência (mes). Período menor: pela data de registro dentro do período.
   const linhas = mesInteiro
     ? await db.q("select tipo, valor, comprovada from economias where cliente_id = $1 and mes = $2", [clienteId, mes])

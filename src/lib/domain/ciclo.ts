@@ -57,3 +57,14 @@ export function periodosDoMes(ciclo: Ciclo, mes: string): Periodo[] {
 }
 
 export const vencimentoDe = (p: Periodo, dias: number) => somarDias(p.fim, dias);
+
+/**
+ * Fração de mensalidade que uma placa paga no período, cobrando sempre o período cheio:
+ * a placa cadastrada em qualquer dia paga o ciclo inteiro em que entrou (mês cheio no ciclo mensal),
+ * e não paga ciclos anteriores ao cadastro.
+ */
+export function fracaoCobrada(ciclo: Ciclo, p: Periodo, cadastradaEm: DataISO): number {
+  if (cadastradaEm > p.fim) return 0;
+  const inicioDoCiclo = periodoDe(ciclo, cadastradaEm).inicio;
+  return fracaoMensal({ inicio: inicioDoCiclo > p.inicio ? inicioDoCiclo : p.inicio, fim: p.fim });
+}
