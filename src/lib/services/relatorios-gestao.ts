@@ -95,7 +95,9 @@ export async function multasEmAberto(db: Db, f: Filtros) {
     cond.push(`(m.condutor_id = $${params.length} or exists (select 1 from placa_condutores pc where pc.placa_id = m.placa_id and pc.condutor_id = $${params.length}))`);
   }
   return db.q(
-    `select m.id, m.cliente_id, m.orgao_id, m.criado_em, ${SQL_SNE} as sne_adesao_em, o.aderente_sne, c.tipo as tipo_proprietario, m.condutor_id, m.indicacao_status, c.nome as cliente, ${SQL_GRUPO} as grupo, p.placa, p.apelido, m.descricao, m.gravidade, m.pontos, m.valor, m.estado, m.data_infracao,
+    `select m.id, m.cliente_id, m.orgao_id, m.criado_em, m.boleto_url, m.linha_digitavel, m.pix_copia_cola,
+            (select d.id from documentos d where d.multa_id = m.id and d.tipo = 'boleto' and d.expira_em > now() limit 1) as doc_boleto,
+            (select n.id from notificacoes_capturadas n where n.multa_id = m.id and n.arquivo_base64 is not null order by n.criado_em desc limit 1) as doc_notificacao, ${SQL_SNE} as sne_adesao_em, o.aderente_sne, c.tipo as tipo_proprietario, m.condutor_id, m.indicacao_status, c.nome as cliente, ${SQL_GRUPO} as grupo, p.placa, p.apelido, m.descricao, m.gravidade, m.pontos, m.valor, m.estado, m.data_infracao,
             o.nome as orgao, m.vencimento, m.notificada_em, (m.notificada_em + 30) as prazo_indicacao,
             least(m.vencimento, case when m.condutor_id is null and m.notificada_em is not null then m.notificada_em + 30 end) as prazo,
             cd.nome as condutor_indicado,
