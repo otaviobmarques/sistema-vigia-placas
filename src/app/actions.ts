@@ -20,6 +20,7 @@ import { adicionarAoCarrinho, aprovarPagamento, cancelarPagamento, confirmarPaga
 import { consultarPlaca, varredura } from "@/lib/services/monitoramento";
 import { enfileirarAntt, enfileirarConsultas } from "@/lib/services/fila-consultas";
 import { cifrar } from "@/lib/cofre";
+import { baixarAutoAntt, segundaViaAntt } from "@/lib/services/antt";
 import { indicarCondutor, aceitarIndicacao, protocolarIndicacao } from "@/lib/services/indicacao";
 import { pedirDefesa, atualizarDefesa } from "@/lib/services/defesa";
 import { fecharMes } from "@/lib/services/faturamento";
@@ -1280,4 +1281,34 @@ export async function consultarAnttJa(f: FormData) {
   if (!ok) ir(volta, { erro: "ANTT não está ativa para este cliente." });
   after(() => enfileirarAntt([clienteId]).then(() => undefined));
   ir(volta, { ok: "Consulta da ANTT enviada. O resultado aparece aqui em instantes." });
+}
+
+// ---------------- Documentos da ANTT sob demanda (cobrados pela Infosimples) ----------------
+
+export async function baixarAutoAnttAcao(f: FormData) {
+  const sessao = await exigirSessao();
+  const id = s(f, "id");
+  const volta = s(f, "volta") || "/antt";
+  let docId: string | null = null;
+  try {
+    docId = await noEscopo(sessao, (db) => baixarAutoAntt(db, id));
+  } catch (e: any) {
+    ir(volta, { erro: e.message });
+  }
+  revalidatePath(volta);
+  ir(volta, { ok: `Auto de infração baixado e guardado por 60 dias. <a href="/api/documentos/${docId}">Abrir</a>`.replace(/<[^>]+>/g, "") });
+}
+
+export async function segundaViaAnttAcao(f: FormData) {
+  const sessao = await exigirSessao();
+  const id = s(f, "id");
+  const volta = s(f, "volta") || "/antt";
+  let r: { codigo: string | null; temPdf: boolean } | null = null;
+  try {
+    r = await noEscopo(sessao, (db) => segundaViaAntt(db, id));
+  } catch (e: any) {
+    ir(volta, { erro: e.message });
+  }
+  revalidatePath(volta);
+  ir(volta, { ok: r?.codigo ? `2ª via emitida: código de barras disponível para copiar${r.temPdf ? " e PDF guardado por 60 dias" : ""}.` : "2ª via consultada, mas o SIFAMA não devolveu código de barras." });
 }

@@ -38,6 +38,10 @@ export interface MultaRow {
   aderente_sne: boolean;
   condutor_nome: string | null;
   no_carrinho: boolean;
+  doc_boleto?: string | null;
+  doc_notificacao?: string | null;
+  boleto_url?: string | null;
+  pix_copia_cola?: string | null;
 }
 
 /** Adesão ao SNE que vale para a multa: a da placa ou a do cliente (proprietário); cliente sem data = desde sempre. */
@@ -46,7 +50,9 @@ export const SQL_SNE = "least(p.sne_adesao_em, case when c.sne_cadastrado then c
 export const SELECT_MULTA = `
   select m.*, p.placa, p.apelido, p.centro_custo, ${SQL_SNE} as sne_adesao_em, c.tipo as tipo_proprietario, c.nome as cliente_nome,
          o.nome as orgao_nome, o.aderente_sne, cd.nome as condutor_nome,
-         exists (select 1 from carrinho_itens ci where ci.multa_id = m.id) as no_carrinho
+         exists (select 1 from carrinho_itens ci where ci.multa_id = m.id) as no_carrinho,
+         (select d.id from documentos d where d.multa_id = m.id and d.tipo = 'boleto' and d.expira_em > now() limit 1) as doc_boleto,
+         (select n.id from notificacoes_capturadas n where n.multa_id = m.id and n.arquivo_base64 is not null order by n.criado_em desc limit 1) as doc_notificacao
   from multas m
   join placas p on p.id = m.placa_id
   join clientes c on c.id = m.cliente_id

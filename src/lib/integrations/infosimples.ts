@@ -25,6 +25,9 @@ export interface MultaEncontrada {
   notificadaEm: DataISO | null;
   vencimento: DataISO | null;
   linhaDigitavel: string | null;
+  /** Link do PDF do boleto/guia na fonte (expira; o PDF é copiado para o banco). */
+  boletoUrl?: string | null;
+  pixCopiaCola?: string | null;
 }
 
 export interface FonteInfosimples {
@@ -261,6 +264,8 @@ function normalizar(b: any, f: FonteInfosimples): MultaEncontrada | null {
     notificadaEm: dataParaISO(primeiro(b, "data_notificacao", "expedicao", "data_emissao", "emissao", "data_expedicao")),
     vencimento: dataParaISO(primeiro(b, "boleto_vencimento", "vencimento", "data_vencimento")),
     linhaDigitavel: (primeiro(b, "boleto_linha_digitavel", "linha_digitavel", "boleto_codigo_barras", "codigo_barras") ?? "").toString().replace(/\D/g, "") || null,
+    boletoUrl: ((u) => (typeof u === "string" && /^https?:\/\//i.test(u) ? u : null))(primeiro(b, "boleto_url", "url_guia_storage", "url_guia", "url_boleto")),
+    pixCopiaCola: (primeiro(b, "pix_copia_e_cola", "pix_copia_cola", "pix") ?? null)?.toString().trim() || null,
   };
 }
 

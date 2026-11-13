@@ -4,6 +4,7 @@ import { sistema } from "@/lib/db";
 import { varredura } from "@/lib/services/monitoramento";
 import { enfileirarAntt, enfileirarConsultas, filaSeparada } from "@/lib/services/fila-consultas";
 import { clientesComAntt } from "@/lib/services/antt";
+import { limparDocumentosVencidos } from "@/lib/services/documentos";
 import { fecharPeriodosEncerrados } from "@/lib/services/faturamento";
 
 export const maxDuration = 300;
@@ -17,5 +18,7 @@ export async function GET(req: Request) {
   const antt = await enfileirarAntt(await sistema((db) => clientesComAntt(db)));
   // Fecha as faturas dos clientes cujo ciclo (diário, semanal, quinzenal, mensal) terminou ontem.
   const faturas = await sistema((db) => fecharPeriodosEncerrados(db));
-  return NextResponse.json({ ...r, antt: antt.enviadas, faturas });
+  // Retenção: boletos e notificações ficam 60 dias no banco.
+  const limpeza = await sistema((db) => limparDocumentosVencidos(db));
+  return NextResponse.json({ ...r, antt: antt.enviadas, faturas, limpeza });
 }

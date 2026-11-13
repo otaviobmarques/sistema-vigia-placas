@@ -15,6 +15,7 @@ import { hojeISO, dataBR, diasEntre, somarDias } from "../domain/dates";
 import { melhorValorHoje, prazoIndicacao, valoresMulta } from "../domain/ctb";
 import { brl } from "../domain/money";
 import { regra, registrarEvento, SELECT_MULTA, type MultaRow } from "./multas";
+import { guardarBoletoDaMulta } from "./documentos";
 
 const LIMITE_FALHAS = 5;
 
@@ -165,24 +166,27 @@ export async function consultarPlaca(db: Db, placaId: string, opts: { avulsa?: b
     if (existente) {
       await db.q(
         `update multas set notificada_em = coalesce(notificada_em, $2), vencimento = coalesce($3, vencimento), linha_digitavel = coalesce(linha_digitavel, $4),
+           boleto_url = coalesce($5, boleto_url), pix_copia_cola = coalesce($6, pix_copia_cola),
            estado = case when estado = 'detectada' and $2::date is not null then 'notificada' else estado end where id = $1`,
-        [existente.id, m.notificadaEm, m.vencimento, m.linhaDigitavel],
+        [existente.id, m.notificadaEm, m.vencimento, m.linhaDigitavel, m.boletoUrl ?? null, m.pixCopiaCola ?? null],
       );
       continue;
     }
     await db.q("insert into orgaos (id, nome, uf) values ($1,$2,$3) on conflict (id) do nothing", [m.orgaoId, m.orgaoNome, p.uf]);
     const ins = await db.one<{ id: string; nova: boolean }>(
       `insert into multas (placa_id, cliente_id, orgao_id, auto_infracao, codigo_infracao, descricao, gravidade, pontos, valor,
-         data_infracao, hora, local, estado, fonte, notificada_em, vencimento, linha_digitavel)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+         data_infracao, hora, local, estado, fonte, notificada_em, vencimento, linha_digitavel, boleto_url, pix_copia_cola)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
        on conflict (orgao_id, auto_infracao, codigo_infracao) do update set
          notificada_em = coalesce(multas.notificada_em, excluded.notificada_em),
          vencimento = coalesce(excluded.vencimento, multas.vencimento),
          linha_digitavel = coalesce(excluded.linha_digitavel, multas.linha_digitavel),
+         boleto_url = coalesce(excluded.boleto_url, multas.boleto_url),
+         pix_copia_cola = coalesce(excluded.pix_copia_cola, multas.pix_copia_cola),
          estado = case when multas.estado = 'detectada' and excluded.notificada_em is not null then 'notificada' else multas.estado end
        returning id, (xmax = 0) as nova`,
       [p.id, p.cliente_id, m.orgaoId, m.autoInfracao, m.codigoInfracao, m.descricao, m.gravidade, m.pontos, m.valor,
-       m.dataInfracao, m.hora, m.local, m.notificadaEm ? "notificada" : "detectada", m.fonteNome, m.notificadaEm, m.vencimento, m.linhaDigitavel],
+       m.dataInfracao, m.hora, m.local, m.notificadaEm ? "notificada" : "detectada", m.fonteNome, m.notificadaEm, m.vencimento, m.linhaDigitavel, m.boletoUrl ?? null, m.pixCopiaCola ?? null],
     );
     if (ins?.nova) {
       novas++;
@@ -220,6 +224,14 @@ export async function consultarPlaca(db: Db, placaId: string, opts: { avulsa?: b
     "update placas set ultima_verificacao = now(), proxima_verificacao = $2, status = case when status in ('aguardando','erro') then 'ativa' else status end where id = $1",
     [p.id, prox],
   );
+  // Copia para o banco o PDF dos boletos em aberto desta placa (os links das fontes expiram). Guardado por 60 dias.
+  const comBoleto = await db.q<{ id: string; cliente_id: string; placa: string; auto_infracao: string; boleto_url: string | null }>(
+    `select m.id, m.cliente_id, $2::text as placa, m.auto_infracao, m.boleto_url from multas m
+      where m.placa_id = $1 and m.boleto_url is not null and m.estado not in ('paga','cancelada')
+        and not exists (select 1 from documentos d where d.multa_id = m.id and d.tipo = 'boleto' and d.expira_em > now())`,
+    [p.id, p.placa],
+  );
+  for (const m of comBoleto) await guardarBoletoDaMulta(db, m).catch(() => false);
   if (novas > 0) await avisarEquipeMultasNovas(db, p, novas);
   return { ok: true, novas, total: r.multas.length };
 }

@@ -15,6 +15,8 @@ import { precosDoCliente } from "@/lib/services/precos";
 import { LogoOrgao, logoDoOrgao } from "@/components/logo-orgao";
 import { SelosDesconto } from "@/components/selo-desconto";
 import { selosDesconto } from "@/lib/domain/ctb";
+import { BotaoCopiar } from "@/components/documentos-multa";
+import { documentosDaMulta } from "@/lib/services/documentos";
 
 export default async function DetalheMulta({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ ok?: string; erro?: string }> }) {
   const s = await exigirCliente();
@@ -31,6 +33,7 @@ export default async function DetalheMulta({ params, searchParams }: { params: P
       defesa: await db.one("select * from pedidos_defesa where multa_id = $1 order by criado_em desc limit 1", [id]),
       cfg: { preco_defesa: (await precosDoCliente(db, s.clienteId)).defesa },
       captura: await db.one("select arquivo_nome, origem from notificacoes_capturadas where multa_id = $1 limit 1", [id]),
+      docs: await documentosDaMulta(db, id),
     };
   });
   if (!d) notFound();
@@ -174,6 +177,28 @@ export default async function DetalheMulta({ params, searchParams }: { params: P
         </div>
 
         <div className="space-y-6">
+          <Card titulo="Boleto e notificação">
+            {(() => {
+              const boleto = d.docs.docs.find((x) => x.tipo === "boleto");
+              const notif = d.docs.notificacoes[0];
+              const nada = !boleto && !m.boleto_url && !m.linha_digitavel && !m.pix_copia_cola && !notif;
+              return (
+                <div className="space-y-3 text-sm">
+                  <div className="flex flex-wrap gap-2">
+                    {boleto ? <a href={`/api/documentos/${boleto.id}`} target="_blank" rel="noopener" className="btn-primario btn-sm">📄 Baixar boleto</a>
+                      : m.boleto_url ? <a href={m.boleto_url} target="_blank" rel="noopener noreferrer" className="btn-contorno btn-sm">📄 Boleto na fonte</a> : null}
+                    {m.pix_copia_cola && <BotaoCopiar texto={m.pix_copia_cola} rotulo="Copiar PIX" className="btn-contorno btn-sm" />}
+                    {m.linha_digitavel && <BotaoCopiar texto={m.linha_digitavel} rotulo="Copiar linha digitável" className="btn-contorno btn-sm" />}
+                    {notif && <a href={`/api/notificacoes/${notif.id}`} target="_blank" rel="noopener" className="btn-contorno btn-sm">🔔 Ver notificação</a>}
+                  </div>
+                  {boleto && <p className="text-xs text-suave">Boleto guardado até {dataBR(new Date(boleto.expira_em).toISOString().slice(0, 10))} (60 dias).</p>}
+                  {!boleto && m.boleto_url && <p className="text-xs text-suave">O link da fonte pode expirar. O PDF é copiado para o sistema na próxima consulta da placa.</p>}
+                  {!notif && <p className="text-xs text-suave">Notificação não disponível nas bases. Envie a foto ou o PDF que chegou em <a href="/enviar" className="link">Enviar notificação</a> (fica guardada por 60 dias).</p>}
+                  {nada && <p className="text-xs text-suave">A fonte desta multa não trouxe boleto. Ele costuma aparecer quando o órgão emite a notificação de penalidade.</p>}
+                </div>
+              );
+            })()}
+          </Card>
           {aberta && m.estado !== "em_defesa" && (
             <section className="rounded-2xl bg-vigia p-5 text-white">
               <h2 className="text-lg font-bold">Prefere contestar?</h2>

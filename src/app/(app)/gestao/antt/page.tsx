@@ -50,7 +50,7 @@ export default async function MultasAnttEquipe({ searchParams }: { searchParams:
           <button className="btn-contorno">Filtrar</button>
           {(sp.cliente || sp.grupo || sp.todas) && <Link href="?" className="btn-leve">Limpar</Link>}
         </form>
-        <TabelaMultasAntt linhas={d.multas} mostrarCliente />
+        <TabelaMultasAntt linhas={d.multas} mostrarCliente volta="/gestao/antt" />
       </Card>
 
       <div className="grid gap-6 lg:grid-cols-3">

@@ -108,3 +108,20 @@ describe("situação da multa", () => {
     for (const s of ["Paga", "Quitada", "Cancelada", "Arquivado", "Baixada"]) expect(m(s)).toBe(0);
   });
 });
+
+describe("boleto e PIX", () => {
+  const dnit = FONTES.find((f) => f.servico === "dnit/infracoes")!;
+  it("guarda o link do boleto e o PIX copia e cola quando a fonte traz", () => {
+    const r = interpretarResposta(dnit, {
+      code: 200, header: { price: "0.24" },
+      data: [{ ait: "S1", datahora: "10/10/2026 14:32", normalizado_valor: 100, situacao: "Em aberto",
+        url_guia: "https://exemplo.gov.br/guia.pdf", pix_copia_e_cola: " 00020126PIX ", debito_quitado: "Não" }],
+    });
+    expect(r.multas[0]).toMatchObject({ boletoUrl: "https://exemplo.gov.br/guia.pdf", pixCopiaCola: "00020126PIX" });
+  });
+  it("ignora link que não é http", () => {
+    const r = interpretarResposta(dnit, { code: 200, header: {}, data: [{ ait: "S2", datahora: "10/10/2026 14:32", normalizado_valor: 100, boleto_url: "javascript:alert(1)" }] });
+    expect(r.multas[0].boletoUrl).toBeNull();
+    expect(r.multas[0].pixCopiaCola).toBeNull();
+  });
+});
