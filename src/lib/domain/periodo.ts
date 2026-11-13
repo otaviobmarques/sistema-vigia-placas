@@ -7,6 +7,7 @@ export const PERIODOS = {
   quinzena: "Quinzena",
   mes: "Mês",
   trimestre: "Trimestre",
+  semestre: "Semestre",
   ano: "Ano",
   tudo: "Todo o período",
   personalizado: "Personalizado",
@@ -28,6 +29,7 @@ export function resolverPeriodo(tipo: TipoPeriodo, hoje: DataISO, opts: { de?: s
       return periodoDe("mensal", hoje);
     }
     case "trimestre": { const t0 = Math.floor((m - 1) / 3) * 3 + 1; return { inicio: `${a}-${String(t0).padStart(2, "0")}-01`, fim: fimDoMes(a, t0 + 2) }; }
+    case "semestre": return m <= 6 ? { inicio: `${a}-01-01`, fim: `${a}-06-30` } : { inicio: `${a}-07-01`, fim: `${a}-12-31` };
     case "ano": return { inicio: `${a}-01-01`, fim: `${a}-12-31` };
     case "personalizado": {
       const de = ehData(opts.de) ? opts.de : null, ate = ehData(opts.ate) ? opts.ate : null;

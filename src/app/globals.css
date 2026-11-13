@@ -45,6 +45,7 @@ h1, h2, h3, .num { font-family: var(--font-display); letter-spacing: -0.01em; }
 }
 
 @media print {
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .nao-imprimir { display: none !important; }
   body { background: white; }
 }

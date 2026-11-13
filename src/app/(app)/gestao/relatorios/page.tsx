@@ -45,7 +45,8 @@ export default async function RelatoriosGestao({ searchParams }: { searchParams:
   const qs = (extra: Record<string, string>) => new URLSearchParams(Object.fromEntries(Object.entries({ tipo, cliente: sp.cliente ?? "", grupo: filtros.grupo ?? "", placa: sp.placa ?? "", periodo: per?.tipo ?? "", de: per?.tipo === "personalizado" ? sp.de ?? "" : "", ate: per?.tipo === "personalizado" ? sp.ate ?? "" : "", mes: !sp.periodo && sp.mes ? sp.mes : "", ...extra }).filter(([, v]) => v))).toString();
   return (
     <>
-      <Cabecalho titulo="Relatórios" sub="Números da operação de todos os clientes. Filtre e exporte para Excel." />
+      <Cabecalho titulo="Relatórios" sub="Números da operação de todos os clientes. Filtre e exporte para Excel."
+        acoes={<Link href={`/relatorio-gerencial${sp.cliente ? `?cliente=${sp.cliente}` : ""}`} className="btn-primario">📊 Relatório Gerencial do cliente</Link>} />
       <div className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {GRUPOS.map((g) => (
           <div key={g.titulo} className={`card p-4 ${g.itens.some((i) => i.tipo === tipo) ? "border-vigia ring-2 ring-vigia/10" : ""}`}>
