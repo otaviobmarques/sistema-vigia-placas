@@ -4,7 +4,7 @@
  * quanto economizou (20%, 40% SNE, NIC evitada, defesa) e o retorno sobre o investimento.
  */
 import type { Db } from "../db";
-import type { Periodo } from "../domain/ciclo";
+import { periodoDe, type Periodo } from "../domain/ciclo";
 import { GRAVIDADES, melhorValorHoje, type Gravidade } from "../domain/ctb";
 import { hojeISO } from "../domain/dates";
 import { calcularFatura } from "./faturamento";
@@ -86,7 +86,10 @@ export async function gerarRelatorioGerencial(db: Db, clienteId: string, p: Peri
   const economiaTotal = desc40.valor + desc20.valor + nic.valor + defesa.valor;
 
   // Quanto pagou pelo Vigia Placa no período (mensalidades proporcionais + saving + defesas + conveniência).
-  const f = await calcularFatura(db, clienteId, p);
+  // Conta só até o mês atual (cobrado cheio); meses que ainda não chegaram não entram.
+  const fimMesAtual = periodoDe("mensal", hoje).fim;
+  const pInv = { inicio: p.inicio, fim: p.fim < fimMesAtual ? p.fim : fimMesAtual };
+  const f = pInv.inicio <= pInv.fim ? await calcularFatura(db, clienteId, pInv) : { mensalidades: 0, saving: 0, defesa: 0, conveniencia: 0, total: 0 };
   const investimento = { mensalidades: f.mensalidades, saving: f.saving, defesa: f.defesa, conveniencia: f.conveniencia, total: f.total + f.conveniencia };
 
   // Oportunidade agora: multas em aberto que ainda têm desconto.

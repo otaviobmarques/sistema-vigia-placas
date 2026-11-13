@@ -22,3 +22,21 @@ describe("ciclo de fechamento", () => {
     expect(vencimentoDe({ inicio: "2026-11-01", fim: "2026-11-30" }, 5)).toBe("2026-12-05");
   });
 });
+
+describe("cobrança sempre cheia (independe do dia do cadastro)", async () => {
+  const { fracaoCobrada } = await import("./ciclo");
+  const nov = { inicio: "2026-11-01", fim: "2026-11-30" };
+  it("mensal: placa cadastrada no meio do mês paga o mês cheio", () => {
+    expect(fracaoCobrada("mensal", nov, "2026-11-12")).toBeCloseTo(1, 10);
+    expect(fracaoCobrada("mensal", nov, "2026-11-30")).toBeCloseTo(1, 10);
+  });
+  it("não paga período anterior ao cadastro nem placa cadastrada depois", () => {
+    expect(fracaoCobrada("mensal", { inicio: "2026-10-01", fim: "2026-10-31" }, "2026-11-12")).toBe(0);
+    // Relatório de vários meses: conta do mês do cadastro em diante (nov + dez = 2 meses)
+    expect(fracaoCobrada("mensal", { inicio: "2026-01-01", fim: "2026-12-31" }, "2026-11-12")).toBeCloseTo(2, 10);
+  });
+  it("ciclos curtos cobram o período cheio em que a placa entrou", () => {
+    expect(fracaoCobrada("semanal", { inicio: "2026-11-09", fim: "2026-11-15" }, "2026-11-14")).toBeCloseTo(7 / 30, 10);
+    expect(fracaoCobrada("quinzenal", { inicio: "2026-11-01", fim: "2026-11-15" }, "2026-11-12")).toBeCloseTo(15 / 30, 10);
+  });
+});
